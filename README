@@ -1,0 +1,3694 @@
+# ABADAR
+
+## Distributed Market Simulation & Trading Platform
+
+> **ABADAR** is a distributed, real-time market simulation platform designed to model the core infrastructure of a modern electronic exchange.
+
+The project focuses on **correctness, concurrency, distributed systems, fault tolerance, observability, and measurable performance** rather than simply building a trading dashboard.
+
+The ultimate goal is to create a project that can demonstrate senior-level backend and system-design skills through a system that can be:
+
+* distributed
+* concurrent
+* event-driven
+* horizontally scalable
+* observable
+* fault tolerant
+* replayable
+* benchmarked under load
+
+---
+
+# Table of Contents
+
+1. [Project Philosophy](#project-philosophy)
+2. [Goals](#goals)
+3. [Non-Goals](#non-goals)
+4. [Technology Stack](#technology-stack)
+5. [System Overview](#system-overview)
+6. [Architecture Evolution](#architecture-evolution)
+7. [Domain Model](#domain-model)
+8. [Order Book](#order-book)
+9. [Matching Engine](#matching-engine)
+10. [Concurrency Model](#concurrency-model)
+11. [Order Lifecycle](#order-lifecycle)
+12. [Event Architecture](#event-architecture)
+13. [Kafka Architecture](#kafka-architecture)
+14. [Persistence](#persistence)
+15. [Consistency Model](#consistency-model)
+16. [Idempotency](#idempotency)
+17. [Services](#services)
+18. [API](#api)
+19. [WebSocket Market Data](#websocket-market-data)
+20. [Frontend](#frontend)
+21. [Authentication](#authentication)
+22. [Risk & Balance Management](#risk--balance-management)
+23. [Failure Handling](#failure-handling)
+24. [Recovery & Replay](#recovery--replay)
+25. [Observability](#observability)
+26. [Testing Strategy](#testing-strategy)
+27. [Load Testing](#load-testing)
+28. [Chaos Testing](#chaos-testing)
+29. [Security](#security)
+30. [Infrastructure](#infrastructure)
+31. [Repository Structure](#repository-structure)
+32. [Architecture Decision Records](#architecture-decision-records)
+33. [Development Phases](#development-phases)
+34. [Milestones](#milestones)
+35. [Definition of Done](#definition-of-done)
+36. [Future Extensions](#future-extensions)
+37. [Portfolio / CV Goals](#portfolio--cv-goals)
+38. [Recommended Learning](#recommended-learning)
+
+---
+
+# Project Philosophy
+
+ABADAR should not be built as:
+
+> "A React application with a bunch of microservices."
+
+It should be built as an **engineering experiment**.
+
+Every major technology must exist because it solves a real problem.
+
+For example:
+
+| Technology    | Problem it solves                        |
+| ------------- | ---------------------------------------- |
+| Go            | Concurrent, low-latency backend services |
+| PostgreSQL    | Durable transactional state              |
+| Kafka         | Ordered, durable event streams           |
+| Redis         | Low-latency ephemeral state / caching    |
+| WebSockets    | Real-time market data                    |
+| OpenTelemetry | Distributed tracing                      |
+| Prometheus    | Metrics                                  |
+| Grafana       | Visualization                            |
+| Docker        | Reproducible infrastructure              |
+| React         | Real-time trading interface              |
+
+Do not add infrastructure simply because it looks good on a technology list.
+
+---
+
+# Goals
+
+ABADAR should eventually support:
+
+## Trading
+
+* Users
+* Accounts
+* Multiple currencies/assets
+* Trading pairs
+* Limit orders
+* Market orders
+* Order cancellation
+* Partial fills
+* Complete fills
+* Order expiration
+* Order history
+* Trade history
+
+## Exchange
+
+* Price-time priority
+* In-memory order books
+* Multiple trading pairs
+* Concurrent order processing
+* Symbol partitioning
+* Horizontal scaling
+
+## Distributed Architecture
+
+* Kafka event streams
+* Consumer groups
+* Idempotent consumers
+* Event replay
+* Service recovery
+* Partition-based processing
+* Failure detection
+
+## Real-Time
+
+* Live order book
+* Live trades
+* Live ticker
+* Portfolio updates
+* WebSocket subscriptions
+
+## Observability
+
+* Metrics
+* Logs
+* Distributed traces
+* Kafka lag
+* Order latency
+* Matching latency
+* Database latency
+* WebSocket connections
+
+## Performance
+
+The system should eventually be benchmarked for:
+
+* orders/sec
+* trades/sec
+* p50 latency
+* p95 latency
+* p99 latency
+* CPU utilization
+* memory utilization
+* Kafka throughput
+* database throughput
+
+---
+
+# Non-Goals
+
+ABADAR is a **simulation**.
+
+It is not:
+
+* a real cryptocurrency exchange
+* a real-money trading platform
+* a financial advice platform
+* a production brokerage
+* a blockchain
+* a payment processor
+
+No real money should ever be involved.
+
+The market is completely simulated.
+
+---
+
+# Technology Stack
+
+## Backend
+
+**Go**
+
+Primary language for:
+
+* API services
+* matching engine
+* event consumers
+* market-data services
+* load generator
+
+Go is particularly appropriate for the project because concurrency is a central concern, and goroutines/channels provide primitives specifically intended for concurrent network services.
+
+---
+
+## Frontend
+
+**React + TypeScript**
+
+Potential libraries:
+
+* React
+* TypeScript
+* Vite
+* lightweight charting library
+* WebSocket client
+
+The frontend is intentionally not the main challenge.
+
+The backend is.
+
+---
+
+## Database
+
+**PostgreSQL**
+
+Used for durable business state.
+
+---
+
+## Event Streaming
+
+**Apache Kafka**
+
+Used for:
+
+* domain events
+* event replay
+* asynchronous consumers
+* market data streams
+* service decoupling
+
+Kafka provides ordering within a partition, while consumer groups distribute partitions among consumers. This is important to ABADAR's architecture because orders for the same trading symbol can be partitioned together while different symbols can be processed in parallel.
+
+---
+
+## Cache / Ephemeral State
+
+**Redis**
+
+Used selectively for:
+
+* caching
+* rate limiting
+* temporary state
+* potentially market-data fan-out
+
+Redis must not become the authoritative financial database.
+
+---
+
+## Observability
+
+* OpenTelemetry
+* Prometheus
+* Grafana
+* structured JSON logging
+
+---
+
+## Infrastructure
+
+* Docker
+* Docker Compose initially
+* Kubernetes later, if justified
+
+Do not start with Kubernetes.
+
+---
+
+# System Overview
+
+The eventual system:
+
+```text
+                         ┌─────────────────────┐
+                         │      ABADAR UI      │
+                         │   React + TypeScript │
+                         └──────────┬──────────┘
+                                    │
+                            REST / WebSocket
+                                    │
+                         ┌──────────▼──────────┐
+                         │     API Gateway     │
+                         └──────────┬──────────┘
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              │                     │                     │
+              ▼                     ▼                     ▼
+       ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+       │    User     │       │    Order    │       │  Portfolio  │
+       │   Service   │       │   Service   │       │   Service   │
+       └─────────────┘       └──────┬──────┘       └─────────────┘
+                                    │
+                                    ▼
+                           ┌─────────────────┐
+                           │ Matching Engine  │
+                           └────────┬────────┘
+                                    │
+                                    ▼
+                              ┌───────────┐
+                              │   Kafka   │
+                              └─────┬─────┘
+                                    │
+                  ┌─────────────────┼──────────────────┐
+                  │                 │                  │
+                  ▼                 ▼                  ▼
+           ┌────────────┐    ┌────────────┐    ┌────────────┐
+           │ Portfolio  │    │   Market   │    │ Analytics  │
+           │  Consumer  │    │    Data    │    │  Consumer  │
+           └────────────┘    └────────────┘    └────────────┘
+                  │                 │
+                  ▼                 ▼
+             PostgreSQL          WebSocket
+```
+
+This is the **destination architecture**, not the starting point.
+
+---
+
+# Architecture Evolution
+
+ABADAR should evolve through several architectural generations.
+
+## Version 0 — Pure Engine
+
+```text
+Client
+  │
+  ▼
+Matching Engine
+  │
+  ▼
+Memory
+```
+
+Focus:
+
+* order book
+* matching
+* correctness
+* concurrency
+* benchmarks
+
+---
+
+## Version 1 — Persistence
+
+```text
+API
+ │
+ ▼
+Matching Engine
+ │
+ ├──────► PostgreSQL
+ │
+ └──────► Trades
+```
+
+Focus:
+
+* durable state
+* order history
+* trade history
+* recovery
+
+---
+
+## Version 2 — Event Driven
+
+```text
+Matching Engine
+       │
+       ▼
+     Kafka
+       │
+ ┌─────┼─────┐
+ ▼     ▼     ▼
+Portfolio Market Analytics
+```
+
+Focus:
+
+* events
+* consumers
+* replay
+* idempotency
+
+---
+
+## Version 3 — Distributed
+
+```text
+                  Kafka
+                    │
+          ┌─────────┼─────────┐
+          ▼         ▼         ▼
+       Engine 1  Engine 2  Engine 3
+
+       BTC/USD   ETH/USD   ABR/USD
+```
+
+Focus:
+
+* partitioning
+* horizontal scaling
+* consumer groups
+* rebalancing
+
+Kafka's model is particularly useful here: records sharing a key can be routed to the same partition, and each partition is processed by one consumer within a consumer group at a time.
+
+---
+
+## Version 4 — Observable
+
+Add:
+
+```text
+OpenTelemetry
+Prometheus
+Grafana
+Structured Logs
+```
+
+---
+
+## Version 5 — Failure Tolerant
+
+Introduce:
+
+* service crashes
+* Kafka outages
+* database failures
+* duplicate messages
+* consumer restarts
+* replay
+
+---
+
+## Version 6 — Benchmarked
+
+Build a dedicated load generator and publish real measurements.
+
+---
+
+# Domain Model
+
+The initial domain consists of:
+
+```text
+User
+Account
+Asset
+TradingPair
+Balance
+Order
+Trade
+Position
+Event
+```
+
+---
+
+# User
+
+```text
+User
+├── id
+├── email
+├── password_hash
+├── created_at
+└── status
+```
+
+---
+
+# Account
+
+A user owns one trading account.
+
+```text
+Account
+├── id
+├── user_id
+├── created_at
+└── status
+```
+
+---
+
+# Asset
+
+Examples:
+
+```text
+USD
+EUR
+BTC
+ETH
+ABR
+```
+
+ABR can be ABADAR's fictional native asset.
+
+---
+
+# Trading Pair
+
+Examples:
+
+```text
+BTC/USD
+ETH/USD
+ABR/USD
+ETH/BTC
+```
+
+A trading pair contains:
+
+```text
+base_asset
+quote_asset
+```
+
+For:
+
+```text
+BTC/USD
+```
+
+BTC is the base asset.
+
+USD is the quote asset.
+
+---
+
+# Balance
+
+```text
+Balance
+├── account_id
+├── asset_id
+├── available
+└── locked
+```
+
+Example:
+
+```text
+BTC
+
+available = 2.0
+locked    = 0.5
+```
+
+The user owns 2.5 BTC total but only 2 BTC is available for new orders.
+
+---
+
+# Order
+
+```text
+Order
+├── id
+├── account_id
+├── symbol
+├── side
+├── type
+├── price
+├── quantity
+├── remaining_quantity
+├── status
+├── created_at
+└── sequence
+```
+
+Possible sides:
+
+```text
+BUY
+SELL
+```
+
+Possible types initially:
+
+```text
+LIMIT
+MARKET
+```
+
+Possible statuses:
+
+```text
+PENDING
+OPEN
+PARTIALLY_FILLED
+FILLED
+CANCELLED
+REJECTED
+EXPIRED
+```
+
+---
+
+# Trade
+
+A trade represents an actual execution.
+
+```text
+Trade
+├── id
+├── symbol
+├── buy_order_id
+├── sell_order_id
+├── price
+├── quantity
+└── executed_at
+```
+
+---
+
+# Position
+
+A position represents the user's resulting holdings.
+
+For example:
+
+```text
+BTC = 1.25
+ETH = 8.4
+```
+
+---
+
+# Order Book
+
+Every trading pair owns an order book.
+
+Example:
+
+```text
+BTC/USD
+
+ASKS
+Price       Quantity
+--------------------
+101250      1.2
+101200      4.5
+101150      2.1
+
+--------------------
+
+BIDS
+Price       Quantity
+--------------------
+101100      1.7
+101050      5.2
+101000      8.4
+```
+
+The best ask is:
+
+```text
+101150
+```
+
+The best bid is:
+
+```text
+101100
+```
+
+The spread is:
+
+```text
+50
+```
+
+---
+
+# Matching Rule
+
+ABADAR uses:
+
+## Price-Time Priority
+
+Price takes precedence.
+
+Within the same price level, earlier orders take precedence.
+
+For BUY orders:
+
+```text
+higher price = higher priority
+```
+
+For SELL orders:
+
+```text
+lower price = higher priority
+```
+
+Within the same price:
+
+```text
+earlier timestamp/sequence = higher priority
+```
+
+A monotonically increasing sequence number should be preferred over timestamps for deterministic ordering.
+
+---
+
+# Example Matching
+
+Existing book:
+
+```text
+BUY
+
+$100,000
+A: 10 BTC
+B: 5 BTC
+```
+
+New order:
+
+```text
+SELL 12 BTC @ $100,000
+```
+
+Execution:
+
+```text
+A → 10 BTC
+B → 2 BTC
+```
+
+Remaining:
+
+```text
+B → 3 BTC
+```
+
+Events:
+
+```text
+TradeExecuted(A, SELLER, 10 BTC)
+TradeExecuted(B, SELLER, 2 BTC)
+OrderFilled(A)
+OrderPartiallyFilled(B)
+```
+
+---
+
+# Matching Engine
+
+The matching engine is the core of ABADAR.
+
+It should be implemented independently of:
+
+* HTTP
+* PostgreSQL
+* Kafka
+* Redis
+* React
+
+This is extremely important.
+
+The engine should be testable with:
+
+```text
+input orders
+     ↓
+matching engine
+     ↓
+execution results
+```
+
+without requiring Docker or external infrastructure.
+
+---
+
+# Core Interfaces
+
+Conceptually:
+
+```go
+type MatchingEngine interface {
+    Submit(order Order) []Execution
+    Cancel(orderID OrderID) error
+    Snapshot(symbol Symbol) OrderBookSnapshot
+}
+```
+
+The exact interface may evolve.
+
+---
+
+# Order Book Data Structures
+
+You need efficient access to:
+
+* best bid
+* best ask
+* insertion
+* cancellation
+* partial fill
+* FIFO ordering at equal price
+
+Possible design:
+
+```text
+Buy:
+    price → FIFO queue
+
+Sell:
+    price → FIFO queue
+```
+
+You may implement price levels using:
+
+* balanced tree
+* heap + maps
+* sorted structure
+* custom price-level tree
+
+Start simple.
+
+Optimize only after benchmarking.
+
+---
+
+# Important Rule
+
+Do not prematurely optimize the order book.
+
+First establish:
+
+```text
+correctness
+↓
+tests
+↓
+benchmark
+↓
+optimization
+```
+
+Not:
+
+```text
+guess
+↓
+complex data structure
+↓
+bugs
+```
+
+---
+
+# Concurrency Model
+
+The core principle:
+
+> **One logical owner processes mutations for a given order book sequentially.**
+
+Conceptually:
+
+```text
+                 Incoming Orders
+                       │
+                       ▼
+                Symbol Router
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+     BTC/USD        ETH/USD        ABR/USD
+        │              │              │
+        ▼              ▼              ▼
+   Worker 1         Worker 2       Worker 3
+        │              │              │
+        ▼              ▼              ▼
+   Order Book       Order Book     Order Book
+```
+
+This minimizes shared mutable state.
+
+Go goroutines and channels can be used to implement this model. Go's concurrency guidance specifically emphasizes goroutines, channels, synchronization and the fact that map operations are not inherently atomic.
+
+---
+
+# Why Not One Global Mutex?
+
+A naive implementation:
+
+```go
+mutex.Lock()
+
+matchOrder()
+
+mutex.Unlock()
+```
+
+would serialize all symbols.
+
+That means:
+
+```text
+BTC/USD
+ETH/USD
+ABR/USD
+SOL/USD
+```
+
+all compete for the same lock.
+
+Instead, ABADAR should eventually isolate work by symbol.
+
+This allows:
+
+```text
+BTC/USD → CPU core 1
+ETH/USD → CPU core 2
+ABR/USD → CPU core 3
+```
+
+subject to the runtime and actual workload.
+
+---
+
+# Sequence Numbers
+
+Each order receives a sequence number.
+
+Example:
+
+```text
+1001
+1002
+1003
+1004
+```
+
+The sequence provides deterministic ordering.
+
+This becomes particularly important when:
+
+* multiple clients submit simultaneously
+* orders arrive through Kafka
+* the system is replayed
+* tests need deterministic results
+
+---
+
+# Order Lifecycle
+
+An order should follow:
+
+```text
+NEW
+ │
+ ▼
+VALIDATING
+ │
+ ├──────────────► REJECTED
+ │
+ ▼
+ACCEPTED
+ │
+ ▼
+OPEN
+ │
+ ├──────► PARTIALLY_FILLED
+ │              │
+ │              ▼
+ │            FILLED
+ │
+ ├──────► CANCELLED
+ │
+ └──────► EXPIRED
+```
+
+---
+
+# Order Validation
+
+Before an order reaches the matching engine:
+
+Check:
+
+* user exists
+* account active
+* symbol exists
+* side valid
+* order type valid
+* quantity > 0
+* price > 0 for limit orders
+* sufficient available balance
+* symbol trading is enabled
+
+---
+
+# Balance Reservation
+
+A critical rule:
+
+> A user cannot submit orders against the same funds multiple times.
+
+Example:
+
+```text
+USD available = $10,000
+```
+
+User submits:
+
+```text
+BUY 1 BTC @ $8,000
+```
+
+Reserve:
+
+```text
+available = $2,000
+locked    = $8,000
+```
+
+The user cannot then submit another:
+
+```text
+BUY 1 BTC @ $8,000
+```
+
+unless sufficient funds remain.
+
+---
+
+# Event Architecture
+
+ABADAR should eventually use domain events.
+
+Example:
+
+```text
+OrderSubmitted
+OrderAccepted
+OrderRejected
+OrderCancelled
+OrderPartiallyFilled
+OrderFilled
+TradeExecuted
+BalanceReserved
+BalanceReleased
+PortfolioUpdated
+MarketPriceUpdated
+```
+
+---
+
+# Event Envelope
+
+All events should use a common envelope.
+
+Example:
+
+```json
+{
+  "event_id": "01JABC...",
+  "event_type": "TradeExecuted",
+  "occurred_at": "2026-10-05T10:00:00Z",
+  "aggregate_id": "trade_123",
+  "aggregate_type": "trade",
+  "sequence": 81231,
+  "version": 1,
+  "payload": {}
+}
+```
+
+---
+
+# Event IDs
+
+Every event must have a globally unique:
+
+```text
+event_id
+```
+
+Consumers use this for idempotency.
+
+---
+
+# Event Versioning
+
+Events should be versioned.
+
+Example:
+
+```text
+TradeExecuted.v1
+TradeExecuted.v2
+```
+
+Do not silently change the schema of an existing event.
+
+---
+
+# Kafka Architecture
+
+Initial topics:
+
+```text
+abadar.orders
+abadar.trades
+abadar.balances
+abadar.portfolio
+abadar.market
+abadar.audit
+```
+
+Potentially later:
+
+```text
+abadar.dead-letter
+```
+
+---
+
+# Kafka Partitioning
+
+For order processing:
+
+```text
+partition key = trading symbol
+```
+
+Example:
+
+```text
+BTC/USD → partition 0
+ETH/USD → partition 1
+ABR/USD → partition 2
+```
+
+The important property is that all orders for a symbol are routed consistently.
+
+Kafka guarantees ordering within a partition, not across all partitions. This is precisely why ABADAR must partition according to the domain's ordering requirement rather than assuming a global Kafka order.
+
+---
+
+# Consumer Groups
+
+Example:
+
+```text
+matching-engine
+portfolio-service
+market-data
+analytics
+```
+
+Each is a separate logical consumer group.
+
+Conceptually:
+
+```text
+             abadar.trades
+                    │
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+   Portfolio     Market      Analytics
+     Group        Group         Group
+```
+
+Each group independently consumes the stream.
+
+---
+
+# Kafka Rebalancing
+
+If:
+
+```text
+matching-engine-1
+matching-engine-2
+```
+
+belong to the same consumer group, Kafka distributes partitions between them.
+
+If one instance disappears, partitions can be reassigned to another consumer.
+
+This behavior should eventually be tested deliberately.
+
+---
+
+# Event Replay
+
+One major ABADAR feature is replayability.
+
+A consumer should be able to start from an earlier Kafka offset and rebuild state.
+
+Example:
+
+```text
+Trade 1
+Trade 2
+Trade 3
+Trade 4
+Trade 5
+```
+
+If Portfolio Service's state is corrupted:
+
+```text
+delete portfolio state
+
+        ↓
+
+replay events
+
+        ↓
+
+rebuild portfolio
+```
+
+Kafka's ability to rewind consumers and re-consume earlier records is one of the reasons it is useful for this architecture.
+
+---
+
+# Persistence
+
+PostgreSQL stores durable state.
+
+Initial tables:
+
+```text
+users
+accounts
+assets
+trading_pairs
+balances
+orders
+trades
+positions
+processed_events
+audit_log
+```
+
+---
+
+# Example Schema
+
+## users
+
+```sql
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+```
+
+---
+
+## assets
+
+```sql
+CREATE TABLE assets (
+    id UUID PRIMARY KEY,
+    symbol TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    decimals INT NOT NULL
+);
+```
+
+---
+
+## trading_pairs
+
+```sql
+CREATE TABLE trading_pairs (
+    id UUID PRIMARY KEY,
+    symbol TEXT NOT NULL UNIQUE,
+    base_asset_id UUID NOT NULL,
+    quote_asset_id UUID NOT NULL,
+    status TEXT NOT NULL
+);
+```
+
+---
+
+## orders
+
+```sql
+CREATE TABLE orders (
+    id UUID PRIMARY KEY,
+    account_id UUID NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    type TEXT NOT NULL,
+    price NUMERIC(30, 10),
+    quantity NUMERIC(30, 10) NOT NULL,
+    remaining_quantity NUMERIC(30, 10) NOT NULL,
+    status TEXT NOT NULL,
+    sequence BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+```
+
+---
+
+## trades
+
+```sql
+CREATE TABLE trades (
+    id UUID PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    buy_order_id UUID NOT NULL,
+    sell_order_id UUID NOT NULL,
+    price NUMERIC(30, 10) NOT NULL,
+    quantity NUMERIC(30, 10) NOT NULL,
+    executed_at TIMESTAMPTZ NOT NULL
+);
+```
+
+---
+
+# Money Representation
+
+Do not use floating-point numbers for financial values.
+
+Bad:
+
+```go
+float64
+```
+
+Prefer:
+
+```text
+integer smallest units
+```
+
+or:
+
+```text
+fixed-precision decimal
+```
+
+For example:
+
+```text
+$100.25
+```
+
+could be represented as:
+
+```text
+10025 cents
+```
+
+For assets with different decimal precision, define the precision explicitly.
+
+---
+
+# Consistency Model
+
+ABADAR intentionally uses different consistency characteristics.
+
+## Matching
+
+Must be:
+
+**strongly ordered and deterministic per trading pair.**
+
+---
+
+## Trade history
+
+Must be:
+
+**durable and immutable.**
+
+---
+
+## Portfolio
+
+Can be:
+
+**eventually consistent with the trade stream**, provided it converges correctly.
+
+---
+
+## Market dashboard
+
+Can be:
+
+**eventually consistent.**
+
+A market ticker being 20 milliseconds behind the matching engine is acceptable.
+
+A trade being executed twice is not.
+
+---
+
+# Source of Truth
+
+This must be explicitly documented.
+
+Initial intended model:
+
+```text
+Order Book
+    ↓
+Matching Engine State
+```
+
+is authoritative for the currently active order book.
+
+Executed trades:
+
+```text
+TradeExecuted events
+```
+
+become durable business records.
+
+Portfolio state:
+
+```text
+derived from events
+```
+
+This distinction should be documented in the architecture decision records.
+
+---
+
+# Idempotency
+
+Distributed systems will inevitably encounter duplicate processing.
+
+Example:
+
+```text
+TradeExecuted #123
+```
+
+is delivered.
+
+Consumer:
+
+```text
+process trade
+```
+
+Then crashes before committing its offset.
+
+Kafka delivers:
+
+```text
+TradeExecuted #123
+```
+
+again.
+
+The consumer must not execute the trade twice.
+
+---
+
+# processed_events
+
+Each consumer can maintain:
+
+```text
+processed_events
+----------------
+consumer
+event_id
+processed_at
+```
+
+Conceptually:
+
+```sql
+INSERT INTO processed_events(...)
+VALUES(...)
+ON CONFLICT DO NOTHING;
+```
+
+Then:
+
+```text
+if inserted:
+    process event
+
+else:
+    event already processed
+```
+
+---
+
+# Services
+
+Eventually ABADAR contains:
+
+## Gateway
+
+Responsibilities:
+
+* authentication
+* routing
+* rate limiting
+* WebSocket entry point
+
+---
+
+## User Service
+
+Responsibilities:
+
+* registration
+* login
+* account management
+
+---
+
+## Order Service
+
+Responsibilities:
+
+* order validation
+* balance reservation
+* order submission
+* cancellation
+* order persistence
+
+---
+
+## Matching Engine
+
+Responsibilities:
+
+* maintain order books
+* match orders
+* generate executions
+* produce trade events
+
+The matching engine should contain as little external infrastructure logic as possible.
+
+---
+
+## Portfolio Service
+
+Consumes:
+
+```text
+TradeExecuted
+BalanceReserved
+BalanceReleased
+```
+
+Maintains:
+
+```text
+balances
+positions
+portfolio value
+```
+
+---
+
+## Market Data Service
+
+Consumes:
+
+```text
+OrderBookUpdated
+TradeExecuted
+```
+
+Produces:
+
+```text
+ticker
+order book
+recent trades
+candles
+```
+
+---
+
+## Analytics Service
+
+Consumes events and generates:
+
+* volume
+* trade count
+* volatility
+* user statistics
+* exchange statistics
+
+---
+
+# API
+
+The initial REST API:
+
+```text
+POST   /api/v1/auth/register
+POST   /api/v1/auth/login
+
+GET    /api/v1/assets
+GET    /api/v1/markets
+
+GET    /api/v1/orders
+POST   /api/v1/orders
+GET    /api/v1/orders/:id
+DELETE /api/v1/orders/:id
+
+GET    /api/v1/trades
+
+GET    /api/v1/account
+GET    /api/v1/account/balances
+GET    /api/v1/portfolio
+```
+
+---
+
+# Create Order
+
+```http
+POST /api/v1/orders
+```
+
+Request:
+
+```json
+{
+  "symbol": "BTC/USD",
+  "side": "BUY",
+  "type": "LIMIT",
+  "quantity": "1.5",
+  "price": "100000"
+}
+```
+
+Response:
+
+```json
+{
+  "id": "order_123",
+  "status": "OPEN",
+  "symbol": "BTC/USD",
+  "side": "BUY",
+  "type": "LIMIT",
+  "quantity": "1.5",
+  "remaining_quantity": "1.5"
+}
+```
+
+---
+
+# Cancel Order
+
+```http
+DELETE /api/v1/orders/:id
+```
+
+The operation must be idempotent.
+
+Cancelling an already cancelled order should not produce inconsistent state.
+
+---
+
+# WebSocket API
+
+Example:
+
+```text
+/ws
+```
+
+Client:
+
+```json
+{
+  "action": "subscribe",
+  "channel": "orderbook",
+  "symbol": "BTC/USD"
+}
+```
+
+Server:
+
+```json
+{
+  "type": "orderbook.snapshot",
+  "symbol": "BTC/USD",
+  "bids": [],
+  "asks": []
+}
+```
+
+Then incremental updates:
+
+```json
+{
+  "type": "orderbook.update",
+  "symbol": "BTC/USD",
+  "sequence": 18382,
+  "bids": [
+    ["100100", "2.5"]
+  ],
+  "asks": []
+}
+```
+
+---
+
+# WebSocket Sequence Numbers
+
+Market updates should have sequence numbers.
+
+Example:
+
+```text
+100
+101
+102
+103
+```
+
+If the frontend receives:
+
+```text
+100
+101
+103
+```
+
+it knows:
+
+```text
+102 was missed
+```
+
+The client can then request a fresh snapshot.
+
+This is an important real-time systems problem and should be implemented deliberately.
+
+---
+
+# Frontend
+
+The UI should resemble a simplified professional trading terminal.
+
+Main layout:
+
+```text
+┌─────────────────────────────────────────────────────┐
+│ ABADAR                         Portfolio   Account  │
+├───────────────────────────────┬─────────────────────┤
+│                               │                     │
+│       PRICE CHART             │     ORDER BOOK      │
+│                               │                     │
+│                               │ ASK                 │
+│                               │ 100250   2.1        │
+│                               │ 100200   4.4        │
+│                               │ 100150   1.8        │
+│                               │                     │
+│                               │ BID                 │
+│                               │ 100100   2.5        │
+│                               │ 100050   4.8        │
+│                               │ 100000   7.2        │
+├───────────────────────────────┴─────────────────────┤
+│                                                     │
+│                    ORDER ENTRY                       │
+│                                                     │
+│       BUY                        SELL               │
+│       Price                      Price              │
+│       Quantity                   Quantity           │
+│                                                     │
+├─────────────────────────────────────────────────────┤
+│ Open Orders                                         │
+├─────────────────────────────────────────────────────┤
+│ Trade History                                       │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+# Authentication
+
+Initial implementation:
+
+```text
+JWT
+```
+
+Access token:
+
+```text
+short-lived
+```
+
+Refresh token:
+
+```text
+longer-lived
+```
+
+Passwords must be hashed using a modern password hashing algorithm.
+
+Never store plaintext passwords.
+
+---
+
+# Rate Limiting
+
+The API should eventually implement rate limits.
+
+Example:
+
+```text
+POST /orders
+
+maximum:
+100 requests / second / account
+```
+
+But don't hardcode arbitrary values.
+
+Make the rate limiter configurable.
+
+Redis is an appropriate candidate for distributed rate limiting.
+
+---
+
+# Risk Management
+
+Before submitting an order:
+
+```text
+requested order
+       │
+       ▼
+calculate required funds
+       │
+       ▼
+check available balance
+       │
+       ├──── insufficient ────► reject
+       │
+       ▼
+reserve funds
+       │
+       ▼
+submit order
+```
+
+For a BUY:
+
+```text
+required_quote =
+    price × quantity
+```
+
+For a SELL:
+
+```text
+required_base =
+    quantity
+```
+
+For market orders, the required amount needs a conservative reservation strategy.
+
+This is an important design problem to solve explicitly.
+
+---
+
+# Trade Settlement
+
+Suppose:
+
+```text
+Buyer:
+USD = 10,000
+
+Seller:
+BTC = 1
+```
+
+Trade:
+
+```text
+BUY 1 BTC @ $9,000
+SELL 1 BTC @ $9,000
+```
+
+Result:
+
+```text
+Buyer:
+USD = 1,000
+BTC = 1
+
+Seller:
+USD = 9,000
+BTC = 0
+```
+
+The settlement operation must be atomic from the perspective of the business state.
+
+---
+
+# Failure Handling
+
+ABADAR must explicitly handle failures.
+
+---
+
+## Matching Engine Crash
+
+Scenario:
+
+```text
+Matching Engine
+      │
+      X
+    crash
+```
+
+Recovery:
+
+```text
+restart
+   │
+   ▼
+load state
+   │
+   ▼
+replay events
+   │
+   ▼
+rebuild order book
+```
+
+---
+
+# Kafka Consumer Crash
+
+Scenario:
+
+```text
+consume event
+      │
+process
+      │
+   crash
+      │
+      X
+```
+
+The event may be delivered again.
+
+Therefore:
+
+```text
+idempotency required
+```
+
+---
+
+# PostgreSQL Crash
+
+The application should:
+
+* detect connection failure
+* retry where safe
+* fail requests gracefully
+* recover automatically when the database returns
+
+Do not blindly retry every database operation.
+
+---
+
+# Kafka Unavailable
+
+The matching engine should not silently claim successful durable processing if its event publication cannot be guaranteed.
+
+This forces an important architectural decision:
+
+> Is the matching engine allowed to acknowledge an order before the event is durably published?
+
+Document the answer.
+
+---
+
+# Recovery
+
+ABADAR should eventually support:
+
+```text
+service crash
+     ↓
+restart
+     ↓
+reconnect Kafka
+     ↓
+restore state
+     ↓
+replay events
+     ↓
+resume processing
+```
+
+---
+
+# Snapshots
+
+Full replay may eventually become expensive.
+
+Therefore implement:
+
+```text
+Snapshot
++
+Events after snapshot
+```
+
+Example:
+
+```text
+Snapshot at sequence 100000
+
+Events:
+100001
+100002
+100003
+...
+100920
+```
+
+Recovery:
+
+```text
+load snapshot
++
+replay 100001 → 100920
+```
+
+rather than replaying the entire history.
+
+---
+
+# Snapshot Contents
+
+A matching-engine snapshot should contain enough information to reconstruct:
+
+```text
+open orders
+price levels
+queue ordering
+sequence number
+symbol
+```
+
+It should not need to contain completed trades.
+
+Those already exist in the event/history stream.
+
+---
+
+# Observability
+
+Every important operation should be observable.
+
+---
+
+# Metrics
+
+Initial metrics:
+
+```text
+abadar_orders_submitted_total
+abadar_orders_rejected_total
+abadar_orders_cancelled_total
+abadar_trades_executed_total
+
+abadar_order_processing_duration_seconds
+abadar_matching_duration_seconds
+abadar_settlement_duration_seconds
+
+abadar_websocket_connections
+abadar_kafka_consumer_lag
+
+abadar_active_orders
+abadar_orderbook_depth
+```
+
+---
+
+# Latency
+
+Measure:
+
+```text
+HTTP request latency
+        ↓
+order validation latency
+        ↓
+queue latency
+        ↓
+matching latency
+        ↓
+event publication latency
+        ↓
+settlement latency
+```
+
+This gives us end-to-end visibility.
+
+---
+
+# Distributed Tracing
+
+An order should have a trace such as:
+
+```text
+POST /orders
+     │
+     ├── validate
+     │
+     ├── reserve balance
+     │
+     ├── publish OrderSubmitted
+     │
+     ├── matching engine
+     │
+     ├── TradeExecuted
+     │
+     └── portfolio update
+```
+
+A single trace should allow us to understand the lifecycle.
+
+---
+
+# Logging
+
+Use structured logs.
+
+Bad:
+
+```text
+something went wrong
+```
+
+Good:
+
+```json
+{
+  "level": "error",
+  "service": "matching-engine",
+  "symbol": "BTC/USD",
+  "order_id": "123",
+  "sequence": 18273,
+  "error": "invalid order state"
+}
+```
+
+---
+
+# Grafana Dashboard
+
+Eventually create dashboards for:
+
+## Exchange
+
+```text
+Orders/sec
+Trades/sec
+Active Orders
+Trading Volume
+```
+
+## Matching Engine
+
+```text
+Matching latency
+Queue latency
+Orders processed
+Order book depth
+```
+
+## Kafka
+
+```text
+Consumer lag
+Messages/sec
+Partition throughput
+```
+
+## Infrastructure
+
+```text
+CPU
+Memory
+Network
+Disk
+```
+
+---
+
+# Testing Strategy
+
+Testing is one of the most important parts of the project.
+
+---
+
+# Unit Tests
+
+The matching engine should have extensive unit tests.
+
+Examples:
+
+```text
+single limit order
+matching buy/sell
+partial fill
+full fill
+multiple price levels
+FIFO priority
+cancel order
+cancel unknown order
+market order
+empty book
+multiple symbols
+```
+
+---
+
+# Example
+
+Input:
+
+```text
+BUY  10 @ 100
+BUY   5 @ 100
+SELL 12 @ 100
+```
+
+Expected:
+
+```text
+Trade 10 @ 100
+Trade 2  @ 100
+```
+
+Remaining:
+
+```text
+BUY 3 @ 100
+```
+
+---
+
+# Property Tests
+
+Eventually introduce property-based testing.
+
+Examples:
+
+### Property 1
+
+No trade can occur without both a buyer and seller.
+
+### Property 2
+
+A filled order's total executions equal its original quantity.
+
+### Property 3
+
+No order can execute above the user's limit price.
+
+### Property 4
+
+FIFO ordering is preserved within a price level.
+
+### Property 5
+
+Cancelling an order prevents future execution.
+
+---
+
+# Concurrency Tests
+
+Run many concurrent submissions.
+
+Example:
+
+```text
+100 goroutines
+×
+10,000 orders
+```
+
+Verify:
+
+* no race conditions
+* no lost orders
+* no duplicated trades
+* deterministic invariants
+
+Run Go's race detector regularly.
+
+---
+
+# Integration Tests
+
+Start:
+
+```text
+PostgreSQL
+Kafka
+Redis
+```
+
+Then test complete workflows:
+
+```text
+register
+↓
+deposit
+↓
+submit order
+↓
+match
+↓
+trade
+↓
+portfolio
+```
+
+---
+
+# End-to-End Tests
+
+Use the actual:
+
+```text
+React
+Gateway
+Services
+Kafka
+PostgreSQL
+```
+
+and execute realistic user flows.
+
+---
+
+# Load Testing
+
+Create:
+
+```text
+loadtest/
+```
+
+The load generator should simulate traders.
+
+Each trader can:
+
+```text
+observe market
+↓
+generate order
+↓
+submit order
+↓
+cancel order
+↓
+submit another order
+```
+
+---
+
+# Trader Simulation
+
+Example strategy:
+
+```text
+Trader 1
+  BUY probability = 45%
+  SELL probability = 55%
+
+Trader 2
+  market orders = 20%
+  limit orders = 80%
+```
+
+Generate thousands of simulated users.
+
+---
+
+# Benchmark Metrics
+
+At minimum:
+
+```text
+Orders/sec
+Trades/sec
+p50
+p95
+p99
+CPU
+Memory
+Kafka lag
+DB latency
+```
+
+---
+
+# Benchmark Report
+
+Every major optimization should have a benchmark.
+
+Example:
+
+```text
+                     Before       After
+
+Orders/sec            38,000       121,000
+p50 latency             4.2ms         1.8ms
+p95 latency            11.4ms         4.2ms
+p99 latency            19.7ms         7.1ms
+CPU                       82%           71%
+```
+
+These numbers are examples only.
+
+**Never put invented numbers on the CV.**
+
+Measure the actual system.
+
+---
+
+# Benchmark Methodology
+
+Every benchmark must document:
+
+```text
+Hardware
+OS
+Go version
+Kafka version
+PostgreSQL version
+number of symbols
+number of traders
+order distribution
+test duration
+warm-up period
+```
+
+Otherwise benchmark results are difficult to interpret.
+
+---
+
+# Chaos Testing
+
+Eventually introduce controlled failures.
+
+Examples:
+
+```text
+kill portfolio service
+kill matching engine
+restart Kafka
+restart PostgreSQL
+disconnect Redis
+add network latency
+pause consumer
+generate duplicate events
+```
+
+---
+
+# Chaos Scenario 1
+
+Kill Portfolio Service while trading.
+
+Expected:
+
+```text
+Matching continues
+       ↓
+Kafka retains events
+       ↓
+Portfolio service restarts
+       ↓
+Consumer resumes
+       ↓
+State converges
+```
+
+---
+
+# Chaos Scenario 2
+
+Kill matching engine.
+
+Expected:
+
+```text
+engine crashes
+     ↓
+restart
+     ↓
+restore snapshot
+     ↓
+replay events
+     ↓
+continue
+```
+
+---
+
+# Chaos Scenario 3
+
+Duplicate event.
+
+Input:
+
+```text
+TradeExecuted(123)
+TradeExecuted(123)
+```
+
+Expected:
+
+```text
+trade applied once
+```
+
+---
+
+# Security
+
+Even though ABADAR is a simulation, implement reasonable security.
+
+## API
+
+* authentication
+* authorization
+* rate limiting
+* request validation
+* payload size limits
+* secure password hashing
+
+## Infrastructure
+
+* Kafka authentication where appropriate
+* database credentials through environment/configuration
+* secrets not committed to Git
+* restricted service permissions
+
+---
+
+# Financial Safety Rules
+
+ABADAR must never allow:
+
+```text
+negative balance
+```
+
+unless negative balances are deliberately implemented as a future feature.
+
+Every trade must preserve conservation rules.
+
+For example:
+
+```text
+total BTC before trade
+=
+total BTC after trade
+```
+
+ignoring explicit system-created assets.
+
+Likewise:
+
+```text
+total USD before trade
+=
+total USD after trade
+```
+
+This gives us powerful invariants for testing.
+
+---
+
+# Infrastructure
+
+Initial Docker Compose:
+
+```text
+postgres
+kafka
+redis
+grafana
+prometheus
+```
+
+Application services can initially run locally.
+
+Later:
+
+```text
+docker compose up
+```
+
+should start the entire development environment.
+
+---
+
+# Local Development
+
+Target:
+
+```bash
+git clone ...
+cd abadar
+
+docker compose up -d
+
+go test ./...
+
+go run ./apps/gateway
+
+go run ./apps/matching-engine
+```
+
+Frontend:
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Eventually:
+
+```bash
+docker compose up
+```
+
+should be enough to launch everything.
+
+---
+
+# Repository Structure
+
+Recommended structure:
+
+```text
+abadar/
+│
+├── apps/
+│   │
+│   ├── gateway/
+│   │   ├── cmd/
+│   │   ├── internal/
+│   │   └── go.mod
+│   │
+│   ├── matching-engine/
+│   │   ├── cmd/
+│   │   ├── internal/
+│   │   │   ├── book/
+│   │   │   ├── matching/
+│   │   │   ├── orders/
+│   │   │   └── execution/
+│   │   └── go.mod
+│   │
+│   ├── order-service/
+│   │
+│   ├── portfolio-service/
+│   │
+│   ├── market-data/
+│   │
+│   └── web/
+│
+├── packages/
+│   ├── events/
+│   ├── contracts/
+│   └── protobuf/
+│
+├── infrastructure/
+│   ├── docker/
+│   ├── kafka/
+│   ├── postgres/
+│   ├── redis/
+│   ├── prometheus/
+│   └── grafana/
+│
+├── loadtest/
+│
+├── migrations/
+│
+├── docs/
+│   ├── architecture/
+│   ├── adr/
+│   ├── benchmarks/
+│   └── diagrams/
+│
+├── scripts/
+│
+├── docker-compose.yml
+├── Makefile
+├── README.md
+└── LICENSE
+```
+
+---
+
+# Architecture Decision Records
+
+Every major architectural decision should have an ADR.
+
+Example:
+
+```text
+docs/adr/
+├── 001-use-go.md
+├── 002-use-postgresql.md
+├── 003-use-kafka.md
+├── 004-order-book-concurrency.md
+├── 005-event-idempotency.md
+├── 006-symbol-partitioning.md
+├── 007-money-representation.md
+└── 008-snapshot-recovery.md
+```
+
+---
+
+# ADR Example
+
+## ADR-006 — Partition Orders by Trading Symbol
+
+### Context
+
+Orders for the same trading pair must be processed deterministically.
+
+### Problem
+
+Multiple matching-engine instances cannot safely mutate the same order book concurrently without introducing substantial coordination.
+
+### Decision
+
+Partition the order stream by trading symbol.
+
+### Consequence
+
+All orders for a symbol are processed sequentially within one Kafka partition/consumer assignment, while different symbols can be processed concurrently.
+
+Kafka's partition model explicitly supports this style of semantic partitioning and preserves ordering within each partition.
+
+### Tradeoff
+
+A very active symbol can become a hotspot.
+
+### Future solution
+
+Investigate:
+
+* symbol sharding
+* multiple matching partitions
+* specialized high-volume engine
+* deterministic sub-partitioning
+
+---
+
+# Development Phases
+
+Do not skip phases.
+
+---
+
+# Phase 0 — Repository
+
+Create:
+
+```text
+abadar/
+```
+
+Set up:
+
+* Git
+* Go
+* README
+* Makefile
+* CI
+* basic project structure
+
+Deliverable:
+
+```text
+go test ./...
+```
+
+works.
+
+---
+
+# Phase 1 — Domain
+
+Implement:
+
+```text
+Asset
+TradingPair
+Order
+Trade
+OrderBook
+Execution
+```
+
+No database.
+
+No Kafka.
+
+---
+
+# Phase 2 — Order Book
+
+Implement:
+
+```text
+add order
+cancel order
+best bid
+best ask
+price levels
+FIFO
+```
+
+Write tests.
+
+---
+
+# Phase 3 — Matching
+
+Implement:
+
+```text
+limit vs limit
+partial fills
+full fills
+multiple price levels
+market orders
+```
+
+Write extensive tests.
+
+---
+
+# Phase 4 — Concurrency
+
+Implement:
+
+```text
+symbol workers
+order queues
+concurrent submissions
+```
+
+Run race detection.
+
+Benchmark.
+
+---
+
+# Phase 5 — Persistence
+
+Add PostgreSQL.
+
+Persist:
+
+```text
+orders
+trades
+users
+balances
+```
+
+---
+
+# Phase 6 — API
+
+Create:
+
+```text
+gateway
+order endpoints
+account endpoints
+market endpoints
+```
+
+---
+
+# Phase 7 — Kafka
+
+Introduce:
+
+```text
+OrderSubmitted
+TradeExecuted
+OrderCancelled
+BalanceUpdated
+```
+
+Implement producers and consumers.
+
+---
+
+# Phase 8 — Portfolio
+
+Build:
+
+```text
+portfolio-service
+```
+
+Consume:
+
+```text
+TradeExecuted
+```
+
+and calculate:
+
+```text
+balances
+positions
+```
+
+---
+
+# Phase 9 — Market Data
+
+Implement:
+
+```text
+market-data
+```
+
+Consume:
+
+```text
+TradeExecuted
+OrderBookUpdated
+```
+
+Produce:
+
+```text
+ticker
+orderbook
+trades
+candles
+```
+
+---
+
+# Phase 10 — WebSockets
+
+Implement:
+
+```text
+subscribe
+unsubscribe
+snapshot
+incremental updates
+sequence numbers
+recovery
+```
+
+---
+
+# Phase 11 — Frontend
+
+Build:
+
+* login
+* market selector
+* order book
+* chart
+* order entry
+* open orders
+* portfolio
+* history
+
+---
+
+# Phase 12 — Observability
+
+Add:
+
+```text
+OpenTelemetry
+Prometheus
+Grafana
+structured logs
+```
+
+Create dashboards.
+
+---
+
+# Phase 13 — Recovery
+
+Implement:
+
+```text
+snapshots
+event replay
+consumer recovery
+engine recovery
+```
+
+---
+
+# Phase 14 — Chaos
+
+Test:
+
+```text
+service crash
+Kafka restart
+DB restart
+duplicate events
+consumer lag
+```
+
+Document results.
+
+---
+
+# Phase 15 — Load Testing
+
+Build:
+
+```text
+loadtest
+```
+
+Simulate:
+
+```text
+100 traders
+1,000 traders
+10,000 traders
+```
+
+or as many as your hardware can realistically support.
+
+---
+
+# Phase 16 — Optimization
+
+Only now optimize.
+
+Profile:
+
+```text
+CPU
+memory
+allocations
+GC
+database
+Kafka
+network
+```
+
+Optimize the actual bottleneck.
+
+---
+
+# Phase 17 — Production Packaging
+
+Add:
+
+* Dockerfiles
+* Docker Compose
+* health checks
+* readiness checks
+* graceful shutdown
+* configuration management
+* CI/CD
+
+Optional:
+
+* Kubernetes
+* cloud deployment
+* TLS
+* managed Kafka/Postgres
+
+---
+
+# Milestones
+
+## M1 — Matching Engine
+
+Definition:
+
+```text
+✓ Limit orders
+✓ Market orders
+✓ Cancellation
+✓ Partial fills
+✓ Price-time priority
+✓ Tests
+```
+
+---
+
+## M2 — Persistent Exchange
+
+```text
+✓ PostgreSQL
+✓ Users
+✓ Balances
+✓ Orders
+✓ Trades
+```
+
+---
+
+## M3 — Event-Driven Exchange
+
+```text
+✓ Kafka
+✓ Events
+✓ Consumers
+✓ Idempotency
+✓ Replay
+```
+
+---
+
+## M4 — Distributed Exchange
+
+```text
+✓ Symbol partitioning
+✓ Multiple matching workers
+✓ Consumer groups
+✓ Horizontal scaling
+```
+
+---
+
+## M5 — Real-Time Exchange
+
+```text
+✓ WebSockets
+✓ Order book
+✓ Ticker
+✓ Trades
+✓ Portfolio
+```
+
+---
+
+## M6 — Observable Exchange
+
+```text
+✓ Metrics
+✓ Tracing
+✓ Logs
+✓ Grafana
+```
+
+---
+
+## M7 — Resilient Exchange
+
+```text
+✓ Snapshots
+✓ Recovery
+✓ Replay
+✓ Failure tests
+✓ Chaos tests
+```
+
+---
+
+## M8 — Performance Study
+
+```text
+✓ Load generator
+✓ Benchmarks
+✓ Profiling
+✓ Optimization
+✓ Benchmark report
+```
+
+---
+
+# Definition of Done
+
+ABADAR should **not** be considered finished because:
+
+```text
+the UI looks good
+```
+
+or:
+
+```text
+orders can be submitted
+```
+
+The project is finished when you can demonstrate:
+
+## Correctness
+
+```text
+✓ Matching rules are correct
+✓ Balances are conserved
+✓ Orders cannot execute beyond limits
+✓ Duplicate events do not duplicate state
+```
+
+## Concurrency
+
+```text
+✓ Concurrent orders are safe
+✓ Race detector passes
+✓ Order sequencing is deterministic
+```
+
+## Distributed Systems
+
+```text
+✓ Events are durable
+✓ Consumers recover
+✓ Events can be replayed
+✓ Services can scale horizontally
+```
+
+## Reliability
+
+```text
+✓ Service crashes are recoverable
+✓ Kafka failures are handled
+✓ Database failures are handled
+✓ Matching state can be restored
+```
+
+## Observability
+
+```text
+✓ Metrics exist
+✓ Logs are structured
+✓ Distributed traces exist
+✓ Kafka lag is visible
+```
+
+## Performance
+
+```text
+✓ Load tests exist
+✓ Benchmarks exist
+✓ Bottlenecks have been identified
+✓ Optimizations are measured
+```
+
+---
+
+# Future Extensions
+
+These should only be considered after the core system works.
+
+## Advanced Orders
+
+* Stop-loss
+* Stop-limit
+* IOC
+* FOK
+* OCO
+
+---
+
+## Market Simulation
+
+Create autonomous market participants:
+
+```text
+Market Maker
+Momentum Trader
+Mean Reversion Trader
+Random Trader
+Whale
+Arbitrage Bot
+```
+
+This turns ABADAR into a genuine market simulation.
+
+---
+
+# Market Maker
+
+A simulated market maker continuously provides liquidity:
+
+```text
+BUY  @ 100000
+SELL @ 100200
+```
+
+Then adjusts based on:
+
+* inventory
+* volatility
+* spread
+* market activity
+
+---
+
+# Candlestick Engine
+
+Generate:
+
+```text
+1s
+5s
+1m
+5m
+15m
+1h
+1d
+```
+
+candles.
+
+Each candle:
+
+```text
+open
+high
+low
+close
+volume
+```
+
+---
+
+# Replayable Market
+
+Because the system is event-driven, eventually allow:
+
+```text
+market session #123
+```
+
+to be replayed.
+
+Example:
+
+```text
+start simulation
+      ↓
+load historical event stream
+      ↓
+replay at 1x
+5x
+10x
+100x
+```
+
+This would make ABADAR considerably more interesting.
+
+---
+
+# Distributed Market Simulation
+
+Eventually run:
+
+```text
+Simulation Worker 1
+Simulation Worker 2
+Simulation Worker 3
+Simulation Worker 4
+```
+
+Each generates traders.
+
+Kafka distributes their activity.
+
+---
+
+# Kubernetes
+
+Only after Docker Compose is working.
+
+Possible deployment:
+
+```text
+                    Kubernetes
+                        │
+        ┌───────────────┼────────────────┐
+        ▼               ▼                ▼
+     Gateway         Matching          Portfolio
+     replicas        replicas           replicas
+        │               │                │
+        └───────────────┼────────────────┘
+                        ▼
+                      Kafka
+```
+
+The goal is not "I used Kubernetes."
+
+The goal is:
+
+> "ABADAR can horizontally scale its stateless services while symbol-partitioned matching workloads are distributed according to Kafka partitions."
+
+---
+
+# Cloud Deployment
+
+Optional.
+
+Possible architecture:
+
+```text
+Cloud Load Balancer
+        │
+        ▼
+API Gateway
+        │
+        ├──── Kubernetes
+        │
+        ├──── Managed PostgreSQL
+        │
+        ├──── Managed Kafka
+        │
+        └──── Redis
+```
+
+Do this only once the local architecture is solid.
+
+---
+
+# Project Documentation
+
+The repository should eventually contain:
+
+```text
+docs/
+├── architecture/
+│   ├── overview.md
+│   ├── matching-engine.md
+│   ├── kafka.md
+│   ├── persistence.md
+│   └── recovery.md
+│
+├── adr/
+│   ├── 001-use-go.md
+│   ├── 002-postgres.md
+│   ├── 003-kafka.md
+│   └── ...
+│
+├── benchmarks/
+│   ├── baseline.md
+│   ├── matching-engine.md
+│   └── distributed.md
+│
+└── diagrams/
+    ├── architecture.png
+    ├── order-lifecycle.png
+    └── recovery.png
+```
+
+---
+
+# Engineering Questions ABADAR Must Answer
+
+By the end of the project, you should be able to answer all of these without looking at your notes.
+
+### Matching
+
+* Why is the order book in memory?
+* Why price-time priority?
+* How do you guarantee FIFO?
+* How do you handle partial fills?
+* How do you handle market orders?
+* How do you cancel an order efficiently?
+
+### Concurrency
+
+* Why goroutines?
+* Why channels?
+* Why not mutexes?
+* Where can races happen?
+* How is ordering guaranteed?
+* What happens when two orders arrive simultaneously?
+
+### Kafka
+
+* Why Kafka?
+* Why partitions?
+* Why partition by symbol?
+* What happens when a consumer dies?
+* What happens during rebalance?
+* What does "at least once" mean?
+* How do you prevent duplicate processing?
+* Can events be replayed?
+
+### Database
+
+* What is the source of truth?
+* What belongs in PostgreSQL?
+* What belongs in memory?
+* Why aren't balances stored only in Redis?
+* What happens if the database goes down?
+
+### Distributed Systems
+
+* What is strongly consistent?
+* What is eventually consistent?
+* What happens if a service crashes after processing but before committing its offset?
+* How do you recover?
+* How do you detect missing events?
+
+### Performance
+
+* What is the bottleneck?
+* How many orders/sec can you process?
+* What is p99 latency?
+* What happens when one symbol becomes extremely hot?
+* What would you optimize next?
+
+### Reliability
+
+* Can the matching engine restart without losing orders?
+* Can portfolio state be rebuilt?
+* What happens if Kafka is unavailable?
+* What happens if the same event arrives twice?
+
+If you can answer these convincingly, the project has accomplished its purpose.
+
+---
+
+# Portfolio / CV Goals
+
+The final CV entry should eventually look something like:
+
+> **ABADAR — Distributed Market Simulation Platform**
+>
+> Designed and implemented a distributed real-time exchange simulation in Go, featuring a concurrent price-time-priority matching engine, Kafka-based event architecture, PostgreSQL persistence, WebSocket market data, idempotent event processing, state recovery and distributed observability.
+>
+> Built a symbol-partitioned processing model enabling independent market workloads to execute concurrently, and developed a dedicated load-testing framework to benchmark throughput, tail latency and failure recovery under simulated trading workloads.
+
+The numbers should be added only after they have been measured.
+
+For example:
+
+```text
+Processed X orders/sec
+at Y ms p99 latency
+across Z simulated traders
+```
+
+---
+
+# What This Project Should Teach You
+
+By completing ABADAR properly, you should gain practical experience with:
+
+```text
+Go
+│
+├── goroutines
+├── channels
+├── synchronization
+├── race detection
+├── profiling
+└── performance optimization
+
+Distributed Systems
+│
+├── partitioning
+├── ordering
+├── event streams
+├── consumer groups
+├── idempotency
+├── replay
+├── failure recovery
+└── eventual consistency
+
+Databases
+│
+├── PostgreSQL
+├── transactions
+├── indexes
+├── locking
+├── isolation
+└── durable state
+
+Infrastructure
+│
+├── Docker
+├── Kafka
+├── Redis
+└── observability
+
+Frontend
+│
+├── React
+├── TypeScript
+├── WebSockets
+└── real-time state
+
+Engineering
+│
+├── testing
+├── benchmarking
+├── profiling
+├── architecture
+├── ADRs
+└── technical documentation
+```
+
+---
+
+# Final Principle
+
+**Do not optimize for the number of technologies in the README.**
+
+Optimize for the number of difficult engineering questions the project forces you to solve.
+
+A small system that correctly handles:
+
+```text
+10,000 concurrent orders
+        ↓
+deterministic matching
+        ↓
+durable event stream
+        ↓
+duplicate delivery
+        ↓
+service crash
+        ↓
+event replay
+        ↓
+correct recovered state
+```
+
+is substantially more impressive than a huge repository containing:
+
+```text
+React
+Next.js
+Go
+Python
+Kafka
+RabbitMQ
+Redis
+MongoDB
+PostgreSQL
+Kubernetes
+Terraform
+AWS
+AI
+```
+
+with no clear reason why any of them exist.
+
+**ABADAR should grow from a correct matching engine into a distributed system—not from a collection of technologies into a matching engine.**
+
+That progression is the project.
