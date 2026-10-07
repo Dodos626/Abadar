@@ -1,0 +1,7 @@
+.git
+.gitignore
+Dockerfile
+**/bin
+**/obj
+**/TestResults
+tests

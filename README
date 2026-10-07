@@ -4,6 +4,49 @@
 
 > **ABADAR** is a distributed, real-time market simulation platform designed to model the core infrastructure of a modern electronic exchange.
 
+## Current Full-Stack Bootstrap
+
+The repository currently includes a production-shaped full stack with persistence and user management:
+
+* `apps/backend` — C# ASP.NET Core backend using dependency injection, EF Core, PostgreSQL, JWT authentication, role authorization, SignalR, health endpoints, and a user CRUD API.
+* `apps/web` — React/Next.js App Router frontend with login, role-aware user administration, profile editing, and real-time SignalR user updates.
+* `docker-compose.yml` — builds and runs PostgreSQL, the backend, and the frontend with health checks and an isolated bridge network.
+
+Start the complete stack:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Then open:
+
+* Frontend: `http://localhost:3000`
+* Backend: `http://localhost:8080/api/v1`
+* Readiness: `http://localhost:8080/api/v1/health/ready`
+* Markets: `http://localhost:8080/api/v1/markets`
+* Login: `POST http://localhost:8080/api/v1/auth/login`
+* Users: `http://localhost:8080/api/v1/users`
+* PostgreSQL host port: `localhost:55432`
+
+Seeded development credentials:
+
+```text
+Admin: admin / admin123
+User:  user  / user123
+```
+
+These credentials are for local development only. Passwords are persisted as ASP.NET Core password hashes, never plaintext.
+
+Local validation without Docker:
+
+```bash
+make test
+make build
+```
+
+PostgreSQL is now included because the user and authentication workflows require durable state and uniqueness constraints. Kafka, Redis, and the observability stack remain deferred until application behavior requires them.
+
 The project focuses on **correctness, concurrency, distributed systems, fault tolerance, observability, and measurable performance** rather than simply building a trading dashboard.
 
 The ultimate goal is to create a project that can demonstrate senior-level backend and system-design skills through a system that can be:
@@ -76,7 +119,7 @@ For example:
 
 | Technology    | Problem it solves                        |
 | ------------- | ---------------------------------------- |
-| Go            | Concurrent, low-latency backend services |
+| C# / .NET     | Concurrent, high-performance backend services |
 | PostgreSQL    | Durable transactional state              |
 | Kafka         | Ordered, durable event streams           |
 | Redis         | Low-latency ephemeral state / caching    |
@@ -187,7 +230,7 @@ The market is completely simulated.
 
 ## Backend
 
-**Go**
+**C# + .NET / ASP.NET Core**
 
 Primary language for:
 
@@ -197,7 +240,7 @@ Primary language for:
 * market-data services
 * load generator
 
-Go is particularly appropriate for the project because concurrency is a central concern, and goroutines/channels provide primitives specifically intended for concurrent network services.
+C# and .NET are appropriate for the project because ASP.NET Core provides a high-performance, cross-platform service runtime, while `Task`, async/await, `System.Threading.Channels`, concurrent collections, and the broader .NET diagnostics ecosystem support the platform's concurrency and observability goals.
 
 ---
 
@@ -209,7 +252,7 @@ Potential libraries:
 
 * React
 * TypeScript
-* Vite
+* Next.js App Router
 * lightweight charting library
 * WebSocket client
 
@@ -223,7 +266,15 @@ The backend is.
 
 **PostgreSQL**
 
-Used for durable business state.
+Used for durable business state. The current implementation uses EF Core with the Npgsql provider, committed migrations, and unique case-insensitive lookup columns for email and username.
+
+---
+
+## Real-Time Application Messaging
+
+**ASP.NET Core SignalR**
+
+Currently used to broadcast user-created, user-updated, and user-deleted events to authenticated frontend clients. This provides an initial real-time integration point before market-data streaming is implemented.
 
 ---
 
@@ -793,11 +844,12 @@ without requiring Docker or external infrastructure.
 
 Conceptually:
 
-```go
-type MatchingEngine interface {
-    Submit(order Order) []Execution
-    Cancel(orderID OrderID) error
-    Snapshot(symbol Symbol) OrderBookSnapshot
+```csharp
+public interface IMatchingEngine
+{
+    IReadOnlyList<Execution> Submit(Order order);
+    void Cancel(OrderId orderId);
+    OrderBookSnapshot Snapshot(Symbol symbol);
 }
 ```
 
@@ -894,7 +946,7 @@ Conceptually:
 
 This minimizes shared mutable state.
 
-Go goroutines and channels can be used to implement this model. Go's concurrency guidance specifically emphasizes goroutines, channels, synchronization and the fact that map operations are not inherently atomic.
+.NET workers, `Task`, and `System.Threading.Channels` can implement this model. Mutable order-book state should remain owned by one logical worker per symbol, while concurrent collections or explicit synchronization protect any state that must be shared.
 
 ---
 
@@ -902,12 +954,11 @@ Go goroutines and channels can be used to implement this model. Go's concurrency
 
 A naive implementation:
 
-```go
-mutex.Lock()
-
-matchOrder()
-
-mutex.Unlock()
+```csharp
+lock (globalLock)
+{
+    MatchOrder();
+}
 ```
 
 would serialize all symbols.
@@ -1264,10 +1315,17 @@ audit_log
 ```sql
 CREATE TABLE users (
     id UUID PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    last_online TIMESTAMPTZ,
+    email VARCHAR(320) NOT NULL,
+    normalized_email VARCHAR(320) NOT NULL UNIQUE,
+    username VARCHAR(50) NOT NULL,
+    normalized_username VARCHAR(50) NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
+    role VARCHAR(20) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
 );
 ```
 
@@ -1342,8 +1400,8 @@ Do not use floating-point numbers for financial values.
 
 Bad:
 
-```go
-float64
+```csharp
+double
 ```
 
 Prefer:
@@ -1617,8 +1675,16 @@ Consumes events and generates:
 The initial REST API:
 
 ```text
-POST   /api/v1/auth/register
 POST   /api/v1/auth/login
+
+GET    /api/v1/users/me
+PUT    /api/v1/users/me
+
+GET    /api/v1/users          admin only
+POST   /api/v1/users          admin only
+GET    /api/v1/users/:id      admin only
+PUT    /api/v1/users/:id      admin only
+DELETE /api/v1/users/:id      admin only
 
 GET    /api/v1/assets
 GET    /api/v1/markets
@@ -1805,7 +1871,9 @@ Main layout:
 Initial implementation:
 
 ```text
-JWT
+JWT bearer access tokens
+role-based authorization: Admin / User
+ASP.NET Core PasswordHasher
 ```
 
 Access token:
@@ -1817,12 +1885,19 @@ short-lived
 Refresh token:
 
 ```text
-longer-lived
+not implemented yet
 ```
 
 Passwords must be hashed using a modern password hashing algorithm.
 
 Never store plaintext passwords.
+
+The current development seed creates:
+
+```text
+admin / admin123 → Admin
+user  / user123  → User
+```
 
 ---
 
@@ -2311,7 +2386,7 @@ Run many concurrent submissions.
 Example:
 
 ```text
-100 goroutines
+100 concurrent tasks
 ×
 10,000 orders
 ```
@@ -2323,7 +2398,7 @@ Verify:
 * no duplicated trades
 * deterministic invariants
 
-Run Go's race detector regularly.
+Use stress tests, deterministic invariants, analyzers, tracing, and concurrency-focused test runs to detect unsafe shared-state behavior. The ownership model should minimize the amount of shared mutable state that requires locking.
 
 ---
 
@@ -2464,7 +2539,7 @@ Every benchmark must document:
 ```text
 Hardware
 OS
-Go version
+.NET SDK/runtime version
 Kafka version
 PostgreSQL version
 number of symbols
@@ -2618,13 +2693,11 @@ Initial Docker Compose:
 
 ```text
 postgres
-kafka
-redis
-grafana
-prometheus
+backend
+frontend
 ```
 
-Application services can initially run locally.
+The PostgreSQL container is durable through a named volume. The backend waits for PostgreSQL readiness, applies EF Core migrations, and then seeds the development accounts.
 
 Later:
 
@@ -2646,11 +2719,11 @@ cd abadar
 
 docker compose up -d
 
-go test ./...
+dotnet test apps/backend/tests/Abadar.Backend.Tests/Abadar.Backend.Tests.csproj
 
-go run ./apps/gateway
+dotnet run --project apps/backend/src/Abadar.Backend/Abadar.Backend.csproj
 
-go run ./apps/matching-engine
+dotnet run --project apps/matching-engine/src/Abadar.MatchingEngine/Abadar.MatchingEngine.csproj
 ```
 
 Frontend:
@@ -2680,19 +2753,23 @@ abadar/
 │
 ├── apps/
 │   │
-│   ├── gateway/
-│   │   ├── cmd/
-│   │   ├── internal/
-│   │   └── go.mod
+│   ├── backend/
+│   │   ├── src/
+│   │   │   └── Abadar.Backend/
+│   │   │       ├── Program.cs
+│   │   │       └── Abadar.Backend.csproj
+│   │   └── tests/
+│   │       └── Abadar.Backend.Tests/
 │   │
 │   ├── matching-engine/
-│   │   ├── cmd/
-│   │   ├── internal/
-│   │   │   ├── book/
-│   │   │   ├── matching/
-│   │   │   ├── orders/
-│   │   │   └── execution/
-│   │   └── go.mod
+│   │   ├── src/
+│   │   │   └── Abadar.MatchingEngine/
+│   │   │       ├── Book/
+│   │   │       ├── Matching/
+│   │   │       ├── Orders/
+│   │   │       ├── Execution/
+│   │   │       └── Abadar.MatchingEngine.csproj
+│   │   └── tests/
 │   │
 │   ├── order-service/
 │   │
@@ -2743,7 +2820,7 @@ Example:
 
 ```text
 docs/adr/
-├── 001-use-go.md
+├── 001-use-dotnet.md
 ├── 002-use-postgresql.md
 ├── 003-use-kafka.md
 ├── 004-order-book-concurrency.md
@@ -2809,7 +2886,7 @@ abadar/
 Set up:
 
 * Git
-* Go
+* C# and .NET
 * README
 * Makefile
 * CI
@@ -2818,7 +2895,7 @@ Set up:
 Deliverable:
 
 ```text
-go test ./...
+dotnet test
 ```
 
 works.
@@ -2893,9 +2970,9 @@ Benchmark.
 
 ---
 
-# Phase 5 — Persistence
+# Phase 5 — Exchange Persistence
 
-Add PostgreSQL.
+Extend the existing PostgreSQL and EF Core foundation beyond user identity.
 
 Persist:
 
@@ -3248,7 +3325,7 @@ The project is finished when you can demonstrate:
 
 ```text
 ✓ Concurrent orders are safe
-✓ Race detector passes
+✓ Concurrency stress and invariant tests pass
 ✓ Order sequencing is deterministic
 ```
 
@@ -3477,7 +3554,7 @@ docs/
 │   └── recovery.md
 │
 ├── adr/
-│   ├── 001-use-go.md
+│   ├── 001-use-dotnet.md
 │   ├── 002-postgres.md
 │   ├── 003-kafka.md
 │   └── ...
@@ -3510,9 +3587,9 @@ By the end of the project, you should be able to answer all of these without loo
 
 ### Concurrency
 
-* Why goroutines?
-* Why channels?
-* Why not mutexes?
+* Why async/await and `Task`?
+* Why `System.Threading.Channels`?
+* Why not one global lock?
 * Where can races happen?
 * How is ordering guaranteed?
 * What happens when two orders arrive simultaneously?
@@ -3569,7 +3646,7 @@ The final CV entry should eventually look something like:
 
 > **ABADAR — Distributed Market Simulation Platform**
 >
-> Designed and implemented a distributed real-time exchange simulation in Go, featuring a concurrent price-time-priority matching engine, Kafka-based event architecture, PostgreSQL persistence, WebSocket market data, idempotent event processing, state recovery and distributed observability.
+> Designed and implemented a distributed real-time exchange simulation in C# and .NET, featuring a concurrent price-time-priority matching engine, Kafka-based event architecture, PostgreSQL persistence, WebSocket market data, idempotent event processing, state recovery and distributed observability.
 >
 > Built a symbol-partitioned processing model enabling independent market workloads to execute concurrently, and developed a dedicated load-testing framework to benchmark throughput, tail latency and failure recovery under simulated trading workloads.
 
@@ -3590,12 +3667,12 @@ across Z simulated traders
 By completing ABADAR properly, you should gain practical experience with:
 
 ```text
-Go
+C# / .NET
 │
-├── goroutines
-├── channels
-├── synchronization
-├── race detection
+├── async/await and Task
+├── System.Threading.Channels
+├── synchronization and concurrent collections
+├── ASP.NET Core
 ├── profiling
 └── performance optimization
 
@@ -3674,7 +3751,8 @@ is substantially more impressive than a huge repository containing:
 ```text
 React
 Next.js
-Go
+C#
+.NET
 Python
 Kafka
 RabbitMQ
