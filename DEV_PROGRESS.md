@@ -2,9 +2,9 @@
 
 ## Current Status
 
-ABADAR is currently at the persistent full-stack foundation stage. The repository has a C# ASP.NET Core backend, PostgreSQL persistence through EF Core, a React/Next.js frontend, JWT authentication, SignalR updates, and Docker Compose orchestration.
+ABADAR has begun Version 0: the pure in-memory matching engine. The repository also retains the C# ASP.NET Core backend, PostgreSQL persistence through EF Core, React/Next.js frontend, JWT authentication, SignalR updates, and Docker Compose orchestration.
 
-This is an application foundation, not yet a distributed exchange. User persistence is durable, but exchange-domain persistence, the matching engine, event streaming, replay, real-time market data, and the observability platform remain future work.
+The engine now supports deterministic price-time matching without HTTP, PostgreSQL, Kafka, Redis, or Docker. Exchange persistence, settlement, durable events, replay, real-time market data, and observability remain future work.
 
 ## Completed Work
 
@@ -88,6 +88,33 @@ GET /api/markets
 ALL /api/backend/[...path]
 ```
 
+### Version 0 pure matching engine
+
+Location: `apps/matching-engine`
+
+- Added a dependency-free .NET 10 class library for the exchange domain and matching logic.
+- Added small domain types for assets, trading pairs, orders, executions, price levels, and snapshots.
+- Uses `decimal` for Version 0 price and quantity values; floating-point values are not used.
+- Added an in-memory order book with sorted bid/ask price levels and FIFO linked lists per price.
+- Added limit orders, market orders, partial fills, full fills, cancellation, and snapshots.
+- Added deterministic order and execution sequences.
+- Trades execute at the resting order's price.
+- Reused order IDs are rejected, including after fill or cancellation.
+- Added one `System.Threading.Channels` worker per symbol. Each worker is the sole owner of its mutable order book, so the order book does not need locks.
+- Different symbols can process independently while commands for one symbol remain sequential.
+- Added correctness and concurrency tests covering matching, price priority, FIFO, limits, cancellation, duplicate IDs, snapshots, sequencing, quantity preservation, and symbol isolation.
+- Added a small Release-mode benchmark executable with warm-up, throughput, p50/p95/p99 processing time, and managed allocation output.
+- Added single-line comments to the Version 0 types, functions, tests, and benchmark helpers so each addition states its purpose.
+
+Version 0 commands:
+
+```bash
+make test-engine
+make benchmark-engine
+```
+
+The benchmark is intentionally simple and dependency-free. It measures the pure synchronous order-book path, not HTTP, persistence, settlement, or end-to-end latency.
+
 ### Container orchestration
 
 Location: `docker-compose.yml`
@@ -125,6 +152,10 @@ The current implementation has been validated with:
 - Standalone Next.js production server test
 - Backend readiness and market endpoint requests
 - Git whitespace and patch validation
+- Version 0 matching-engine Release build
+- 16 matching correctness and concurrency tests
+- Baseline pure-engine benchmark execution
+- Recorded three baseline benchmark runs in `docs/benchmarks/version-0-baseline.md`
 
 The .NET 10 SDK is installed in WSL under the current user's home directory and configured in the shell profile. The expanded PostgreSQL, backend, and frontend Compose stack has been built and validated with all services healthy.
 
@@ -134,8 +165,6 @@ The following components are intentionally not part of the bootstrap:
 
 - Kafka or another event-streaming platform
 - Redis
-- Matching engine and order book
-- Order submission and cancellation
 - Portfolio and balance management
 - WebSocket market data
 - Durable domain events
@@ -149,15 +178,13 @@ These capabilities should be introduced incrementally when their application req
 
 ## Recommended Next Milestone
 
-The next milestone should focus on the exchange domain in memory before adding distributed infrastructure:
+Version 0 should remain small. The next work should strengthen the engine before adding infrastructure:
 
-1. Define precise money and quantity representations.
-2. Implement `Asset`, `TradingPair`, `Order`, `Trade`, and `Execution` domain types.
-3. Implement a deterministic limit order book.
-4. Implement price-time-priority matching.
-5. Add comprehensive unit, invariant, and concurrency tests.
-6. Expose order submission and cancellation through the backend.
-7. Replace the temporary market snapshot with state produced by the domain layer.
+1. Add randomized invariant tests for large order streams.
+2. Decide and document the long-term fixed-precision representation before persistence.
+3. Add cancellation and snapshot stress tests while workers are active.
+4. Run and record repeatable benchmark samples on named hardware.
+5. Only then expose the engine through the backend API.
 
 Event streaming should follow after the in-memory exchange-domain behavior is correct, deterministic, and benchmarkable. PostgreSQL is already available for durable application state.
 
@@ -176,8 +203,11 @@ Event streaming should follow after the in-memory exchange-domain behavior is co
 | User CRUD and profile management | Complete |
 | SignalR user updates | Complete |
 | Docker runtime validation | Complete |
-| Exchange domain model | Not started |
-| Order book and matching engine | Not started |
+| Exchange domain model | Version 0 complete |
+| Order book and matching engine | Version 0 complete |
+| Matching correctness tests | Complete (16 passing) |
+| Symbol-worker concurrency | Complete |
+| Pure-engine baseline benchmark | Complete |
 | Exchange persistence and event streaming | Not started |
 | Real-time WebSocket data | Not started |
 | Production observability | Not started |
