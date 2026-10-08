@@ -275,6 +275,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .adminStack { display: grid; gap: 24px; }
 /* Lays out Version 1 simulator controls, summaries, and durable history tables. */
 .formActions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.formHint { margin: -10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .symbolPicker { padding: 0; border: 0; }
 .symbolPicker legend { margin-bottom: 12px; font-size: 13px; font-weight: 700; }
 .symbolPicker > div { display: flex; gap: 10px; flex-wrap: wrap; }

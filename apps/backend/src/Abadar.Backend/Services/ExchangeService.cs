@@ -40,6 +40,7 @@ public sealed class ExchangeService(
     ILogger<ExchangeService> logger) : IExchangeService
 {
     private const int PersistenceBatchSize = 250;
+    private const int MaximumOrdersPerSymbol = 100_000;
     // Serializes simulations and destructive resets against the shared matching engine.
     private static readonly SemaphoreSlim MutationGate = new(1, 1);
     // Restricts simulations to the symbols currently supported by the admin UI.
@@ -123,6 +124,10 @@ public sealed class ExchangeService(
             var random = request.Seed is null ? Random.Shared : new Random(request.Seed.Value);
             var symbolResults = new List<SimulationSymbolResult>();
             var symbolOrders = new List<(string Symbol, List<OrderRequest> Orders)>();
+            var durableOrders = await dbContext.Orders
+                .Where(order => symbols.Contains(order.Symbol)
+                    && (order.Status == "open" || order.Status == "partially_filled"))
+                .ToDictionaryAsync(order => order.Id, cancellationToken);
 
             await ReportProgressAsync(
                 simulationId,
@@ -205,7 +210,10 @@ public sealed class ExchangeService(
                 decimal? lastPrice = null;
                 for (var index = 0; index < orders.Count; index++)
                 {
-                    var result = await StageDurableOrderAsync(orders[index], cancellationToken);
+                    var result = await StageDurableOrderAsync(
+                        orders[index],
+                        durableOrders,
+                        cancellationToken);
                     tradesExecuted += result.Executions.Count;
                     executedQuantity += result.Executions.Sum(execution => execution.Quantity);
                     lastPrice = result.Executions.LastOrDefault()?.Price ?? lastPrice;
@@ -470,6 +478,7 @@ public sealed class ExchangeService(
     // Stages one engine submission for the next batched database commit.
     private async Task<OrderResult> StageDurableOrderAsync(
         OrderRequest request,
+        IDictionary<Guid, ExchangeOrder> durableOrders,
         CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
@@ -490,6 +499,7 @@ public sealed class ExchangeService(
             UpdatedAt = now
         };
         dbContext.Orders.Add(incoming);
+        durableOrders[incoming.Id] = incoming;
         dbContext.OutboxEvents.Add(IntegrationEventFactory.Create(
             new EventEnvelope<OrderAcceptedEvent>(
                 Guid.NewGuid(),
@@ -516,40 +526,31 @@ public sealed class ExchangeService(
             .Select(execution => request.Side == OrderSide.Buy ? execution.SellOrderId : execution.BuyOrderId)
             .Distinct()
             .ToArray();
-        var restingOrders = new Dictionary<Guid, ExchangeOrder>();
-        if (restingOrderIds.Length > 0)
+        foreach (var restingOrderId in restingOrderIds)
         {
-            restingOrders = dbContext.Orders.Local
-                .Where(order => restingOrderIds.Contains(order.Id))
-                .ToDictionary(order => order.Id);
-            var missingOrderIds = restingOrderIds
-                .Where(orderId => !restingOrders.ContainsKey(orderId))
-                .ToArray();
-            if (missingOrderIds.Length > 0)
+            if (!durableOrders.TryGetValue(restingOrderId, out var restingOrder))
             {
-                var persistedOrders = await dbContext.Orders
-                    .Where(order => missingOrderIds.Contains(order.Id))
-                    .ToListAsync(cancellationToken);
-                foreach (var persistedOrder in persistedOrders)
-                {
-                    restingOrders[persistedOrder.Id] = persistedOrder;
-                }
+                throw new InvalidOperationException("A matched resting order was not found in durable state.");
+            }
+            if (dbContext.Entry(restingOrder).State == EntityState.Detached)
+            {
+                dbContext.Orders.Update(restingOrder);
+            }
+        }
+
+        foreach (var execution in result.Executions)
+        {
+            var restingId = request.Side == OrderSide.Buy
+                ? execution.SellOrderId
+                : execution.BuyOrderId;
+            if (!durableOrders.TryGetValue(restingId, out var resting))
+            {
+                throw new InvalidOperationException("A matched resting order was not found in durable state.");
             }
 
-            foreach (var execution in result.Executions)
-            {
-                var restingId = request.Side == OrderSide.Buy
-                    ? execution.SellOrderId
-                    : execution.BuyOrderId;
-                if (!restingOrders.TryGetValue(restingId, out var resting))
-                {
-                    throw new InvalidOperationException("A matched resting order was not found in durable state.");
-                }
-
-                resting.RemainingQuantity -= execution.Quantity;
-                resting.Status = resting.RemainingQuantity == 0 ? "filled" : "partially_filled";
-                resting.UpdatedAt = now;
-            }
+            resting.RemainingQuantity -= execution.Quantity;
+            resting.Status = resting.RemainingQuantity == 0 ? "filled" : "partially_filled";
+            resting.UpdatedAt = now;
         }
 
         foreach (var execution in result.Executions)
@@ -568,10 +569,10 @@ public sealed class ExchangeService(
 
             var buyAccountId = execution.BuyOrderId == request.Id
                 ? request.AccountId
-                : restingOrders[execution.BuyOrderId].AccountId;
+                : durableOrders[execution.BuyOrderId].AccountId;
             var sellAccountId = execution.SellOrderId == request.Id
                 ? request.AccountId
-                : restingOrders[execution.SellOrderId].AccountId;
+                : durableOrders[execution.SellOrderId].AccountId;
             dbContext.OutboxEvents.Add(IntegrationEventFactory.Create(
                 new EventEnvelope<TradeExecutedEvent>(
                     Guid.NewGuid(),
@@ -613,8 +614,10 @@ public sealed class ExchangeService(
             errors["symbols"] = ["Select at least one trading symbol."];
         else if (request.Symbols.Any(symbol => !SupportedSymbols.Contains(symbol.Trim())))
             errors["symbols"] = ["Supported symbols are BTC/USD, ETH/USD, SOL/USD, and ABR/USD."];
-        if (request.MinTrades is < 1 or > 5_000 || request.MaxTrades < request.MinTrades || request.MaxTrades > 5_000)
-            errors["trades"] = ["Trade counts must be between 1 and 5,000, with max greater than or equal to min."];
+        if (request.MinTrades is < 1 or > MaximumOrdersPerSymbol
+            || request.MaxTrades < request.MinTrades
+            || request.MaxTrades > MaximumOrdersPerSymbol)
+            errors["trades"] = [$"Order counts must be between 1 and {MaximumOrdersPerSymbol:N0} per symbol, with max greater than or equal to min."];
         if (request.MinPrice <= 0 || request.MaxPrice < request.MinPrice)
             errors["price"] = ["Prices must be positive, with max greater than or equal to min."];
         if (request.MinQuantity <= 0 || request.MaxQuantity < request.MinQuantity)

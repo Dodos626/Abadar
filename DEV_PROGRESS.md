@@ -135,6 +135,8 @@ The benchmark is intentionally simple and dependency-free. It measures the pure 
 - Added live progress bars, current counters, active/completed architecture-stage highlighting, and a timestamped progress log while simulations run.
 - Batched simulation persistence in groups of 250 orders so 2,500–5,000 order runs do not issue one PostgreSQL commit per order.
 - Extended the Next.js proxy timeout for market simulations to 120 seconds and now distinguish operation timeouts from an unavailable backend.
+- Raised the explicit simulation limit to 100,000 orders per selected symbol, added browser-side maximums/help text, and extended the simulation proxy timeout to 15 minutes for high-volume runs.
+- Replaced per-execution EF Core resting-order lookups with a simulation-local durable order map, reducing a 50,000-order integration run from timeout-level behavior to a passing multi-second test.
 - Added concise one-line comments across the Version 1 backend models, contracts, endpoint mappings, exchange service methods, persistence configuration, migration, integration tests, matching-engine recovery additions, frontend API types, simulator components, administrator navigation, Dockerfile, Compose services, and root Docker ignore rules.
 - Kept generated EF Core designer and model-snapshot files unchanged because they are regenerated from the annotated source model and should not be hand-edited.
 
@@ -190,7 +192,7 @@ docker compose up --build
 The current implementation has been validated with:
 
 - .NET 10 restore and production build
-- 16 ASP.NET Core integration tests, including durable restart recovery, multi-batch simulation, outbox creation, consumer idempotency, simulation-hub authorization, and SignalR query-token authentication
+- 17 ASP.NET Core integration tests, including durable restart recovery, 50,000-order simulation, outbox creation, consumer idempotency, simulation-hub authorization, and SignalR query-token authentication
 - Version 2 outbox and duplicate-consumer idempotency integration tests
 - EF Core migration generation
 - NuGet transitive dependency vulnerability scan

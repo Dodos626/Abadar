@@ -314,8 +314,8 @@ export function MarketSimulator() {
           </fieldset>
 
           <div className="formGrid adminFormGrid">
-            <NumberField label="Minimum orders" min={1} value={form.min_trades} onChange={(value) => setForm({ ...form, min_trades: value })} />
-            <NumberField label="Maximum orders" min={1} value={form.max_trades} onChange={(value) => setForm({ ...form, max_trades: value })} />
+            <NumberField label="Minimum orders" min={1} max={100000} value={form.min_trades} onChange={(value) => setForm({ ...form, min_trades: value })} />
+            <NumberField label="Maximum orders" min={1} max={100000} value={form.max_trades} onChange={(value) => setForm({ ...form, max_trades: value })} />
             <NumberField label="Sell percentage" min={0} max={100} value={form.sell_percentage} onChange={(value) => setForm({ ...form, sell_percentage: value })} />
             <NumberField label="Minimum price" min={0.00000001} step="any" value={form.min_price} onChange={(value) => setForm({ ...form, min_price: value })} />
             <NumberField label="Maximum price" min={0.00000001} step="any" value={form.max_price} onChange={(value) => setForm({ ...form, max_price: value })} />
@@ -324,6 +324,7 @@ export function MarketSimulator() {
             <NumberField label="Maximum quantity" min={0.00000001} step="any" value={form.max_quantity} onChange={(value) => setForm({ ...form, max_quantity: value })} />
             <NumberField label="Random seed" value={form.seed ?? 0} onChange={(value) => setForm({ ...form, seed: value })} />
           </div>
+          <p className="formHint">Up to 100,000 orders are allowed per selected symbol. Large multi-symbol runs multiply that total and may take several minutes.</p>
 
           <div className="formActions">
             <button className="button buttonPrimary" disabled={busy || form.symbols.length === 0} type="submit">

@@ -275,6 +275,37 @@ public sealed class BackendApiTests
     }
 
     [Fact]
+    // Verifies the high-volume administrator range accepts counts above the old limit.
+    public async Task Admin_CanRequestFiftyThousandOrders()
+    {
+        var adminLogin = await LoginAsync("admin", "admin123");
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            adminLogin.AccessToken);
+
+        using var response = await _client.PostAsync(
+            "/api/v1/admin/simulations",
+            JsonContent.Create(
+                new SimulateMarketRequest(
+                    ["BTC/USD"],
+                    50_000,
+                    50_000,
+                    95,
+                    105,
+                    0.1m,
+                    2,
+                    50,
+                    15,
+                    31415),
+                options: JsonOptions));
+        var simulation = await response.Content.ReadFromJsonAsync<SimulateMarketResponse>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(simulation);
+        Assert.Equal(50_000, simulation.OrdersSubmitted);
+    }
+
+    [Fact]
     // Verifies business writes create durable order and trade outbox events.
     public async Task Simulation_CreatesDurableOutboxEvents()
     {

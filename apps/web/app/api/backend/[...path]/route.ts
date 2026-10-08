@@ -1,6 +1,6 @@
 const backendURL = process.env.BACKEND_URL ?? "http://localhost:8080";
 const defaultTimeoutMilliseconds = 10_000;
-const simulationTimeoutMilliseconds = 120_000;
+const simulationTimeoutMilliseconds = 900_000;
 
 export const dynamic = "force-dynamic";
 
