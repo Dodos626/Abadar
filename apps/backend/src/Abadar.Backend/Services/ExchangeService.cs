@@ -1,5 +1,6 @@
 using Abadar.Backend.Data;
 using Abadar.Backend.Events;
+using Abadar.Backend.Hubs;
 using Abadar.Backend.Models;
 using Abadar.MatchingEngine;
 using Microsoft.EntityFrameworkCore;
@@ -35,6 +36,7 @@ public interface IExchangeService
 public sealed class ExchangeService(
     AbadarDbContext dbContext,
     IMatchingEngine matchingEngine,
+    ISimulationProgressEvents simulationProgress,
     ILogger<ExchangeService> logger) : IExchangeService
 {
     private const int PersistenceBatchSize = 250;
@@ -110,6 +112,7 @@ public sealed class ExchangeService(
         await MutationGate.WaitAsync(cancellationToken);
         var autoDetectChanges = dbContext.ChangeTracker.AutoDetectChangesEnabled;
         dbContext.ChangeTracker.AutoDetectChangesEnabled = false;
+        var simulationId = request.SimulationId ?? Guid.NewGuid();
         try
         {
             ValidateSimulation(request);
@@ -119,9 +122,26 @@ public sealed class ExchangeService(
                 .ToArray();
             var random = request.Seed is null ? Random.Shared : new Random(request.Seed.Value);
             var symbolResults = new List<SimulationSymbolResult>();
+            var symbolOrders = new List<(string Symbol, List<OrderRequest> Orders)>();
 
-            foreach (var symbol in symbols)
+            await ReportProgressAsync(
+                simulationId,
+                "validating",
+                "Validated ranges, symbols, percentages, and the deterministic seed.",
+                null,
+                0,
+                symbols.Length,
+                0,
+                0,
+                0,
+                0,
+                0,
+                4,
+                cancellationToken);
+
+            for (var symbolIndex = 0; symbolIndex < symbols.Length; symbolIndex++)
             {
+                var symbol = symbols[symbolIndex];
                 var orderCount = random.Next(request.MinTrades, request.MaxTrades + 1);
                 var orders = new List<OrderRequest>(orderCount);
 
@@ -149,6 +169,37 @@ public sealed class ExchangeService(
 
                 // Submit priced liquidity first, then market orders, while retaining random side distribution.
                 orders.Sort((left, right) => left.Type.CompareTo(right.Type));
+                symbolOrders.Add((symbol, orders));
+            }
+
+            var totalOrders = symbolOrders.Sum(value => value.Orders.Count);
+            var generatedOrders = 0;
+            for (var symbolIndex = 0; symbolIndex < symbolOrders.Count; symbolIndex++)
+            {
+                var item = symbolOrders[symbolIndex];
+                generatedOrders += item.Orders.Count;
+                await ReportProgressAsync(
+                    simulationId,
+                    "generated",
+                    $"Generated {item.Orders.Count:N0} orders for {item.Symbol} and sorted liquidity before market orders.",
+                    item.Symbol,
+                    symbolIndex + 1,
+                    symbolOrders.Count,
+                    generatedOrders,
+                    0,
+                    totalOrders,
+                    0,
+                    0,
+                    8 + 12m * generatedOrders / Math.Max(totalOrders, 1),
+                    cancellationToken);
+            }
+
+            var processedOrders = 0;
+            var totalTradesExecuted = 0;
+            var totalExecutedQuantity = 0m;
+            for (var symbolIndex = 0; symbolIndex < symbolOrders.Count; symbolIndex++)
+            {
+                var (symbol, orders) = symbolOrders[symbolIndex];
                 var tradesExecuted = 0;
                 var executedQuantity = 0m;
                 decimal? lastPrice = null;
@@ -158,10 +209,27 @@ public sealed class ExchangeService(
                     tradesExecuted += result.Executions.Count;
                     executedQuantity += result.Executions.Sum(execution => execution.Quantity);
                     lastPrice = result.Executions.LastOrDefault()?.Price ?? lastPrice;
+                    processedOrders++;
+                    totalTradesExecuted += result.Executions.Count;
+                    totalExecutedQuantity += result.Executions.Sum(execution => execution.Quantity);
 
                     if ((index + 1) % PersistenceBatchSize == 0)
                     {
                         await FlushPersistenceBatchAsync(cancellationToken);
+                        await ReportProgressAsync(
+                            simulationId,
+                            "persisting",
+                            $"Matched and committed {processedOrders:N0} of {totalOrders:N0} orders in PostgreSQL batches.",
+                            symbol,
+                            symbolIndex + 1,
+                            symbolOrders.Count,
+                            totalOrders,
+                            processedOrders,
+                            totalOrders,
+                            totalTradesExecuted,
+                            totalExecutedQuantity,
+                            20 + 65m * processedOrders / Math.Max(totalOrders, 1),
+                            cancellationToken);
                     }
                 }
 
@@ -169,6 +237,21 @@ public sealed class ExchangeService(
                 {
                     await FlushPersistenceBatchAsync(cancellationToken);
                 }
+
+                await ReportProgressAsync(
+                    simulationId,
+                    "symbol_complete",
+                    $"Completed {symbol}: {orders.Count:N0} orders produced {tradesExecuted:N0} executions.",
+                    symbol,
+                    symbolIndex + 1,
+                    symbolOrders.Count,
+                    totalOrders,
+                    processedOrders,
+                    totalOrders,
+                    totalTradesExecuted,
+                    totalExecutedQuantity,
+                    20 + 65m * processedOrders / Math.Max(totalOrders, 1),
+                    cancellationToken);
 
                 symbolResults.Add(new SimulationSymbolResult(
                     symbol,
@@ -178,6 +261,21 @@ public sealed class ExchangeService(
                     lastPrice));
             }
 
+            await ReportProgressAsync(
+                simulationId,
+                "completed",
+                "Matching and durable writes completed; the outbox publisher will now deliver events to Kafka.",
+                null,
+                symbolOrders.Count,
+                symbolOrders.Count,
+                totalOrders,
+                totalOrders,
+                totalOrders,
+                totalTradesExecuted,
+                totalExecutedQuantity,
+                100,
+                cancellationToken);
+
             return new SimulateMarketResponse(
                 symbolResults.Sum(result => result.OrdersSubmitted),
                 symbolResults.Sum(result => result.TradesExecuted),
@@ -185,6 +283,20 @@ public sealed class ExchangeService(
         }
         catch
         {
+            await ReportProgressAsync(
+                simulationId,
+                "failed",
+                "The simulation failed; tracked changes were cleared and the in-memory books were recovered from durable state.",
+                null,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                100,
+                CancellationToken.None);
             dbContext.ChangeTracker.Clear();
             await matchingEngine.ResetAsync(CancellationToken.None);
             await RecoverAsync(CancellationToken.None);
@@ -194,6 +306,45 @@ public sealed class ExchangeService(
         {
             dbContext.ChangeTracker.AutoDetectChangesEnabled = autoDetectChanges;
             MutationGate.Release();
+        }
+    }
+
+    // Publishes one best-effort real-time checkpoint without affecting simulation correctness.
+    private async Task ReportProgressAsync(
+        Guid simulationId,
+        string phase,
+        string message,
+        string? symbol,
+        int currentSymbol,
+        int totalSymbols,
+        int ordersGenerated,
+        int ordersProcessed,
+        int totalOrders,
+        int tradesExecuted,
+        decimal executedQuantity,
+        decimal percent,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await simulationProgress.PublishAsync(new SimulationProgressUpdate(
+                simulationId,
+                phase,
+                message,
+                symbol,
+                currentSymbol,
+                totalSymbols,
+                ordersGenerated,
+                ordersProcessed,
+                totalOrders,
+                tradesExecuted,
+                executedQuantity,
+                decimal.Round(Math.Clamp(percent, 0, 100), 2),
+                DateTimeOffset.UtcNow), cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Could not publish simulation progress for {SimulationId}", simulationId);
         }
     }
 

@@ -80,7 +80,24 @@ public sealed record SimulateMarketRequest(
     decimal MaxQuantity,
     int SellPercentage,
     int MarketOrderPercentage,
-    int? Seed = null);
+    int? Seed = null,
+    Guid? SimulationId = null);
+
+// Streams one real-time checkpoint from the simulation pipeline.
+public sealed record SimulationProgressUpdate(
+    Guid SimulationId,
+    string Phase,
+    string Message,
+    string? Symbol,
+    int CurrentSymbol,
+    int TotalSymbols,
+    int OrdersGenerated,
+    int OrdersProcessed,
+    int TotalOrders,
+    int TradesExecuted,
+    decimal ExecutedQuantity,
+    decimal Percent,
+    DateTimeOffset OccurredAt);
 
 // Summarizes one symbol produced by a completed simulation request.
 public sealed record SimulationSymbolResult(

@@ -130,6 +130,9 @@ The benchmark is intentionally simple and dependency-free. It measures the pure 
 - Added an administrator-only simulation endpoint with symbol, order range, price range, quantity range, sell percentage, market-order percentage, and seed controls.
 - Added an administrator-only reset endpoint that preserves the calling administrator and deletes all other users and exchange data.
 - Added a Next.js administrator simulator with history tables and guarded destructive reset controls.
+- Added an administrator architecture walkthrough panel that explains each simulation stage, the code/endpoint it invokes, and how control moves from the browser through matching, persistence, Kafka, and projections.
+- Added a dedicated administrator SignalR simulation hub with isolated run groups and real-time phase, symbol, order, trade, volume, and percentage updates.
+- Added live progress bars, current counters, active/completed architecture-stage highlighting, and a timestamped progress log while simulations run.
 - Batched simulation persistence in groups of 250 orders so 2,500–5,000 order runs do not issue one PostgreSQL commit per order.
 - Extended the Next.js proxy timeout for market simulations to 120 seconds and now distinguish operation timeouts from an unavailable backend.
 - Added concise one-line comments across the Version 1 backend models, contracts, endpoint mappings, exchange service methods, persistence configuration, migration, integration tests, matching-engine recovery additions, frontend API types, simulator components, administrator navigation, Dockerfile, Compose services, and root Docker ignore rules.
@@ -187,7 +190,7 @@ docker compose up --build
 The current implementation has been validated with:
 
 - .NET 10 restore and production build
-- 14 ASP.NET Core integration tests, including durable restart recovery, multi-batch simulation, outbox creation, and consumer idempotency
+- 16 ASP.NET Core integration tests, including durable restart recovery, multi-batch simulation, outbox creation, consumer idempotency, simulation-hub authorization, and SignalR query-token authentication
 - Version 2 outbox and duplicate-consumer idempotency integration tests
 - EF Core migration generation
 - NuGet transitive dependency vulnerability scan

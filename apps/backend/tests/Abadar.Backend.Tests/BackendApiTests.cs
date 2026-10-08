@@ -162,6 +162,33 @@ public sealed class BackendApiTests
     }
 
     [Fact]
+    // Verifies a standard user cannot subscribe to administrator simulation progress.
+    public async Task StandardUser_CannotNegotiateSimulationHub()
+    {
+        var userLogin = await LoginAsync("user", "user123");
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            userLogin.AccessToken);
+
+        using var response = await _client.PostAsync(
+            "/hubs/simulations/negotiate?negotiateVersion=1",
+            null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    // Verifies query-string bearer authentication is enabled for the simulation transport.
+    public async Task AdminToken_InQueryStringAuthenticatesSimulationHubTransport()
+    {
+        var adminLogin = await LoginAsync("admin", "admin123");
+        using var response = await _client.GetAsync(
+            $"/hubs/simulations?access_token={Uri.EscapeDataString(adminLogin.AccessToken)}");
+
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
     // Verifies simulations persist queryable order and trade history.
     public async Task Admin_CanSimulateMarketAndReadDurableHistory()
     {
@@ -486,6 +513,8 @@ public sealed class BackendWebApplicationFactory : WebApplicationFactory<Program
                 options.UseInMemoryDatabase(_databaseName, _databaseRoot));
             services.RemoveAll<IMatchingEngine>();
             services.AddSingleton<IMatchingEngine, MatchingEngine>();
+            services.RemoveAll<Abadar.Backend.Hubs.ISimulationProgressEvents>();
+            services.AddSingleton<Abadar.Backend.Hubs.ISimulationProgressEvents, NoOpSimulationProgressEvents>();
             services.RemoveAll<KafkaOptions>();
             services.AddSingleton(new KafkaOptions("unused:9092", false, 3, 1));
             if (_recoverExchange)
@@ -518,4 +547,11 @@ public sealed class PreserveDatabaseInitializer : IDatabaseInitializer
 {
     // Skips destructive testing initialization for the restarted application.
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+}
+
+// Disables SignalR progress delivery while preserving simulation behavior in tests.
+public sealed class NoOpSimulationProgressEvents : Abadar.Backend.Hubs.ISimulationProgressEvents
+{
+    public Task PublishAsync(SimulationProgressUpdate update, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }

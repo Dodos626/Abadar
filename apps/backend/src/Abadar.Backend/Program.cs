@@ -84,8 +84,10 @@ builder.Services
             OnMessageReceived = context =>
             {
                 var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
                 if (!string.IsNullOrWhiteSpace(accessToken)
-                    && context.HttpContext.Request.Path.StartsWithSegments("/hubs/users"))
+                    && (path.StartsWithSegments("/hubs/users")
+                        || path.StartsWithSegments("/hubs/simulations")))
                 {
                     context.Token = accessToken;
                 }
@@ -111,6 +113,7 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
 builder.Services.AddScoped<IUserEvents, SignalRUserEvents>();
+builder.Services.AddScoped<ISimulationProgressEvents, SignalRSimulationProgressEvents>();
 // Shares one symbol-partitioned matching engine across all Version 1 API requests.
 builder.Services.AddSingleton<IMatchingEngine, MatchingEngine>();
 // Creates a scoped persistence coordinator around the singleton matching engine.
@@ -196,6 +199,8 @@ app.MapUserEndpoints();
 // Exposes durable history and administrator exchange operations.
 app.MapExchangeEndpoints();
 app.MapHub<UsersHub>("/hubs/users")
+    .RequireAuthorization(policy => policy.RequireRole(nameof(UserRole.Admin)));
+app.MapHub<SimulationHub>("/hubs/simulations")
     .RequireAuthorization(policy => policy.RequireRole(nameof(UserRole.Admin)));
 
 await using (var scope = app.Services.CreateAsyncScope())

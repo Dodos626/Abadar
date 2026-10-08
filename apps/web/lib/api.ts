@@ -47,6 +47,24 @@ export type SimulationRequest = {
   sell_percentage: number;
   market_order_percentage: number;
   seed?: number;
+  simulation_id?: string;
+};
+
+// Describes one real-time simulation checkpoint broadcast by SignalR.
+export type SimulationProgress = {
+  simulation_id: string;
+  phase: string;
+  message: string;
+  symbol: string | null;
+  current_symbol: number;
+  total_symbols: number;
+  orders_generated: number;
+  orders_processed: number;
+  total_orders: number;
+  trades_executed: number;
+  executed_quantity: number;
+  percent: number;
+  occurred_at: string;
 };
 
 // Describes the activity generated for one requested trading pair.
