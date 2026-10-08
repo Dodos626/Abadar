@@ -103,6 +103,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .buttonPrimary:hover:not(:disabled) { background: var(--green-dark); }
 .buttonSecondary, .buttonGhost { color: var(--green-dark); border-color: #b9c4bd; background: transparent; }
 .buttonSecondary:hover:not(:disabled), .buttonGhost:hover:not(:disabled) { border-color: var(--green); background: rgba(255, 255, 255, 0.7); }
+/* Styles the guarded destructive database-reset action. */
+.buttonDanger { color: #fff; background: var(--red); }
+.buttonDanger:hover:not(:disabled) { background: #8e2828; }
 .buttonSmall { min-height: 38px; padding: 0 16px; font-size: 13px; }
 .buttonFull { width: 100%; }
 .rolePill {
@@ -270,6 +273,22 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .dangerButton { color: var(--red); }
 .dangerButton:disabled { cursor: not-allowed; opacity: 0.35; }
 .adminStack { display: grid; gap: 24px; }
+/* Lays out Version 1 simulator controls, summaries, and durable history tables. */
+.formActions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.symbolPicker { padding: 0; border: 0; }
+.symbolPicker legend { margin-bottom: 12px; font-size: 13px; font-weight: 700; }
+.symbolPicker > div { display: flex; gap: 10px; flex-wrap: wrap; }
+.checkPill { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; cursor: pointer; font-size: 13px; }
+.checkPill:has(input:checked) { color: var(--green-dark); border-color: #90ab9b; background: var(--green-soft); }
+.simulationSummary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 24px; }
+.simulationSummary article { display: grid; gap: 7px; padding: 16px; border: 1px solid var(--line); border-radius: 5px; background: #fafbf8; }
+.simulationSummary span { color: var(--muted); font-size: 12px; }
+.historyTable { overflow-x: auto; border: 1px solid var(--line); border-radius: 5px; }
+.historyRow { display: grid; align-items: center; gap: 18px; min-height: 62px; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 12px; text-transform: capitalize; }
+.historyRow:last-child { border-bottom: 0; }
+.historyHeader { min-height: 44px; color: var(--muted); background: #f4f4f0; font: 700 10px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.orderHistoryRow { grid-template-columns: 100px 70px 70px 110px minmax(180px, 1fr) 130px; min-width: 790px; }
+.tradeHistoryRow { grid-template-columns: 100px 130px 130px 100px minmax(190px, 1fr); min-width: 720px; }
 .tableHeading { margin-bottom: 22px; }
 .tableHeading span { color: var(--muted); font-size: 12px; }
 .userRow { display: grid; grid-template-columns: minmax(260px, 1.4fr) 0.55fr minmax(160px, 0.8fr) auto; align-items: center; gap: 20px; min-height: 74px; padding: 14px 18px; border-bottom: 1px solid var(--line); }

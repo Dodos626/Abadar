@@ -21,6 +21,17 @@ public interface IMatchingEngine : IAsyncDisposable
     ValueTask<OrderBookSnapshot> SnapshotAsync(
         string symbol,
         CancellationToken cancellationToken = default);
+
+    // Restores durable open orders and the last execution sequence for one symbol.
+    ValueTask RecoverAsync(
+        string symbol,
+        IReadOnlyList<RecoveredOrder> orders,
+        long lastOrderSequence,
+        long lastExecutionSequence,
+        CancellationToken cancellationToken = default);
+
+    // Clears all in-memory order books while keeping the engine reusable.
+    ValueTask ResetAsync(CancellationToken cancellationToken = default);
 }
 
 // Symbols are independent. Each symbol gets one sequential channel reader.
@@ -47,6 +58,22 @@ public sealed class MatchingEngine : IMatchingEngine
         string symbol,
         CancellationToken cancellationToken = default) =>
         Worker(symbol).SnapshotAsync(cancellationToken);
+
+    // Restores one symbol before new commands are accepted for that symbol.
+    public ValueTask RecoverAsync(
+        string symbol,
+        IReadOnlyList<RecoveredOrder> orders,
+        long lastOrderSequence,
+        long lastExecutionSequence,
+        CancellationToken cancellationToken = default) =>
+        Worker(symbol).RecoverAsync(orders, lastOrderSequence, lastExecutionSequence, cancellationToken);
+
+    // Resets every existing symbol worker in its command order.
+    public async ValueTask ResetAsync(CancellationToken cancellationToken = default)
+    {
+        var workers = _workers.Values.ToArray();
+        await Task.WhenAll(workers.Select(worker => worker.ResetAsync(cancellationToken).AsTask()));
+    }
 
     // Completes every symbol worker and waits for its queued work.
     public async ValueTask DisposeAsync()
@@ -94,6 +121,22 @@ public sealed class MatchingEngine : IMatchingEngine
         // Queues a snapshot command behind earlier mutations.
         public ValueTask<OrderBookSnapshot> SnapshotAsync(CancellationToken token) =>
             SendAsync<OrderBookSnapshot>(complete => new Snapshot(complete), token);
+
+        // Queues durable state restoration behind earlier commands.
+        public async ValueTask RecoverAsync(
+            IReadOnlyList<RecoveredOrder> orders,
+            long lastOrderSequence,
+            long lastExecutionSequence,
+            CancellationToken token) =>
+            await SendAsync<bool>(complete => new Recover(
+                orders,
+                lastOrderSequence,
+                lastExecutionSequence,
+                complete), token);
+
+        // Queues an in-place reset so later commands observe an empty book.
+        public async ValueTask ResetAsync(CancellationToken token) =>
+            await SendAsync<bool>(complete => new Reset(complete), token);
 
         // Stops accepting commands and drains the worker loop.
         public async ValueTask DisposeAsync()
@@ -170,6 +213,46 @@ public sealed class MatchingEngine : IMatchingEngine
 
             // Propagates either the snapshot result or its exception.
             private void Complete(Func<OrderBookSnapshot> action)
+            {
+                try { Completion.SetResult(action()); }
+                catch (Exception exception) { Completion.SetException(exception); }
+            }
+        }
+
+        // Represents one queued durable-state recovery operation.
+        private sealed record Recover(
+            IReadOnlyList<RecoveredOrder> Orders,
+            long LastOrderSequence,
+            long LastExecutionSequence,
+            TaskCompletionSource<bool> Completion) : Command
+        {
+            // Restores the book and completes the waiting caller.
+            public override void Execute(OrderBook book) => Complete(() =>
+            {
+                book.Recover(Orders, LastOrderSequence, LastExecutionSequence);
+                return true;
+            });
+
+            // Propagates either successful recovery or its exception.
+            private void Complete(Func<bool> action)
+            {
+                try { Completion.SetResult(action()); }
+                catch (Exception exception) { Completion.SetException(exception); }
+            }
+        }
+
+        // Represents one queued in-memory reset operation.
+        private sealed record Reset(TaskCompletionSource<bool> Completion) : Command
+        {
+            // Clears the book and completes the waiting caller.
+            public override void Execute(OrderBook book) => Complete(() =>
+            {
+                book.Reset();
+                return true;
+            });
+
+            // Propagates either successful reset or its exception.
+            private void Complete(Func<bool> action)
             {
                 try { Completion.SetResult(action()); }
                 catch (Exception exception) { Completion.SetException(exception); }

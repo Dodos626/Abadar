@@ -8,6 +8,7 @@ using Abadar.Backend.Endpoints;
 using Abadar.Backend.Hubs;
 using Abadar.Backend.Models;
 using Abadar.Backend.Services;
+using Abadar.MatchingEngine;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -107,6 +108,10 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
 builder.Services.AddScoped<IUserEvents, SignalRUserEvents>();
+// Shares one symbol-partitioned matching engine across all Version 1 API requests.
+builder.Services.AddSingleton<IMatchingEngine, MatchingEngine>();
+// Creates a scoped persistence coordinator around the singleton matching engine.
+builder.Services.AddScoped<IExchangeService, ExchangeService>();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddProblemDetails();
 
@@ -178,6 +183,8 @@ app.UseAuthorization();
 app.MapSystemEndpoints();
 app.MapAuthEndpoints();
 app.MapUserEndpoints();
+// Exposes durable history and administrator exchange operations.
+app.MapExchangeEndpoints();
 app.MapHub<UsersHub>("/hubs/users")
     .RequireAuthorization(policy => policy.RequireRole(nameof(UserRole.Admin)));
 
@@ -185,6 +192,12 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var initializer = scope.ServiceProvider.GetRequiredService<IDatabaseInitializer>();
     await initializer.InitializeAsync();
+    if (!app.Environment.IsEnvironment("Testing"))
+    {
+        // Rebuilds every active order book before the backend accepts traffic.
+        var exchangeService = scope.ServiceProvider.GetRequiredService<IExchangeService>();
+        await exchangeService.RecoverAsync();
+    }
 }
 
 app.Run();

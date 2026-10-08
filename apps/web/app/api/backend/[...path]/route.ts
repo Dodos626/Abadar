@@ -1,4 +1,6 @@
 const backendURL = process.env.BACKEND_URL ?? "http://localhost:8080";
+const defaultTimeoutMilliseconds = 10_000;
+const simulationTimeoutMilliseconds = 120_000;
 
 export const dynamic = "force-dynamic";
 
@@ -7,6 +9,7 @@ async function proxy(
   context: { params: Promise<{ path: string[] }> },
 ) {
   const { path } = await context.params;
+  const backendPath = path.join("/");
   const url = new URL(`/api/v1/${path.join("/")}`, backendURL);
   url.search = new URL(request.url).search;
 
@@ -20,6 +23,9 @@ async function proxy(
   if (requestId) headers.set("x-request-id", requestId);
 
   const hasBody = !["GET", "HEAD"].includes(request.method);
+  const timeoutMilliseconds = backendPath === "admin/simulations"
+    ? simulationTimeoutMilliseconds
+    : defaultTimeoutMilliseconds;
 
   try {
     const response = await fetch(url, {
@@ -27,7 +33,7 @@ async function proxy(
       headers,
       body: hasBody ? await request.arrayBuffer() : undefined,
       cache: "no-store",
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(timeoutMilliseconds),
     });
 
     return new Response(response.body, {
@@ -38,15 +44,18 @@ async function proxy(
         "cache-control": "no-store",
       },
     });
-  } catch {
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "TimeoutError";
     return Response.json(
       {
         error: {
-          code: "backend_unavailable",
-          message: "The backend service could not be reached.",
+          code: timedOut ? "backend_timeout" : "backend_unavailable",
+          message: timedOut
+            ? `The backend operation exceeded ${timeoutMilliseconds / 1000} seconds.`
+            : "The backend service could not be reached.",
         },
       },
-      { status: 503 },
+      { status: timedOut ? 504 : 503 },
     );
   }
 }

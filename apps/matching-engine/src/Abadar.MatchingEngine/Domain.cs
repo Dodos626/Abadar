@@ -70,6 +70,13 @@ public sealed record OrderResult(
     decimal RemainingQuantity,
     IReadOnlyList<Execution> Executions);
 
+// Carries a durable open order back into an empty order book during recovery.
+public sealed record RecoveredOrder(
+    OrderRequest Request,
+    long Sequence,
+    decimal RemainingQuantity,
+    OrderStatus Status);
+
 // Exposes immutable details about an order currently resting on the book.
 public sealed record RestingOrder(
     Guid Id,

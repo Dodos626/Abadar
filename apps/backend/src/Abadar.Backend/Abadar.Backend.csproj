@@ -15,4 +15,9 @@
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Integrates the dependency-free matching engine into the Version 1 API. -->
+    <ProjectReference Include="../../../matching-engine/src/Abadar.MatchingEngine/Abadar.MatchingEngine.csproj" />
+  </ItemGroup>
 </Project>

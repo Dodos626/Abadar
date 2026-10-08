@@ -35,6 +35,68 @@ export type ApiError = {
   };
 };
 
+// Defines the administrator controls sent to the market simulation endpoint.
+export type SimulationRequest = {
+  symbols: string[];
+  min_trades: number;
+  max_trades: number;
+  min_price: number;
+  max_price: number;
+  min_quantity: number;
+  max_quantity: number;
+  sell_percentage: number;
+  market_order_percentage: number;
+  seed?: number;
+};
+
+// Describes the activity generated for one requested trading pair.
+export type SimulationSymbolResult = {
+  symbol: string;
+  orders_submitted: number;
+  trades_executed: number;
+  executed_quantity: number;
+  last_price: number | null;
+};
+
+// Returns aggregate and per-symbol market simulation totals.
+export type SimulationResponse = {
+  orders_submitted: number;
+  trades_executed: number;
+  symbols: SimulationSymbolResult[];
+};
+
+// Models one durable order row returned by the Version 1 API.
+export type OrderHistory = {
+  id: string;
+  symbol: string;
+  side: string;
+  type: string;
+  price: number | null;
+  quantity: number;
+  remaining_quantity: number;
+  status: string;
+  sequence: number;
+  created_at: string;
+};
+
+// Models one immutable trade row returned by the Version 1 API.
+export type TradeHistory = {
+  id: string;
+  symbol: string;
+  price: number;
+  quantity: number;
+  sequence: number;
+  executed_at: string;
+};
+
+// Reports the records removed by the administrator reset action.
+export type ResetDatabaseResponse = {
+  preserved_admin_id: string;
+  users_deleted: number;
+  orders_deleted: number;
+  trades_deleted: number;
+};
+
 export class ApiRequestError extends Error {
   constructor(
     message: string,

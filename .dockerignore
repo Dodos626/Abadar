@@ -1,0 +1,9 @@
+# Excludes repository metadata, secrets, and generated build output from root builds.
+.git
+.env
+**/bin
+**/obj
+**/TestResults
+apps/web/node_modules
+apps/web/.next
+apps/web/tsconfig.tsbuildinfo

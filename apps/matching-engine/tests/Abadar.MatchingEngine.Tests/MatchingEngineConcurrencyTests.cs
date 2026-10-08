@@ -58,4 +58,29 @@ public sealed class MatchingEngineConcurrencyTests
         Assert.Equal(100, (await engine.SnapshotAsync("BTC/USD")).Bids.Single().Price);
         Assert.Equal(200, (await engine.SnapshotAsync("ETH/USD")).Bids.Single().Price);
     }
+
+    [Fact]
+    // Verifies recovered FIFO state and sequence counters continue deterministically.
+    public async Task Recovery_RestoresBookAndContinuesSequences()
+    {
+        await using var engine = new MatchingEngine();
+        var first = OrderBookTests.Limit(OrderSide.Buy, 5, 100);
+        var second = OrderBookTests.Limit(OrderSide.Buy, 3, 100);
+
+        await engine.RecoverAsync("BTC/USD",
+        [
+            new RecoveredOrder(first, 8, 2, OrderStatus.PartiallyFilled),
+            new RecoveredOrder(second, 9, 3, OrderStatus.Open)
+        ], 9, 12);
+
+        var result = await engine.SubmitAsync(OrderBookTests.Limit(OrderSide.Sell, 4, 100));
+
+        Assert.Equal(10, result.Sequence);
+        Assert.Equal([13L, 14L], result.Executions.Select(value => value.Sequence));
+        Assert.Equal([first.Id, second.Id], result.Executions.Select(value => value.BuyOrderId));
+        Assert.Equal(1, (await engine.SnapshotAsync("BTC/USD")).Bids.Single().Quantity);
+
+        await engine.ResetAsync();
+        Assert.Empty((await engine.SnapshotAsync("BTC/USD")).Bids);
+    }
 }

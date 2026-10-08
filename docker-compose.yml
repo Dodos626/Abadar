@@ -1,6 +1,7 @@
 name: abadar
 
 services:
+  # Stores durable users, orders, and immutable trade history.
   postgres:
     image: postgres:18-alpine
     environment:
@@ -21,10 +22,11 @@ services:
     networks:
       - abadar
 
+  # Hosts the authenticated API, matching engine, persistence, and recovery flow.
   backend:
     build:
-      context: ./apps/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/backend/Dockerfile
     environment:
       PORT: "8080"
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000}
@@ -49,6 +51,7 @@ services:
     networks:
       - abadar
 
+  # Hosts the Next.js user and administrator workspaces.
   frontend:
     build:
       context: ./apps/web
@@ -79,8 +82,10 @@ services:
       - abadar
 
 networks:
+  # Isolates internal service discovery from unrelated Docker workloads.
   abadar:
     driver: bridge
 
 volumes:
+  # Preserves PostgreSQL state across container recreation.
   postgres-data:

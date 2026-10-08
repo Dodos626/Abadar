@@ -19,6 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Exercises the backend and matching engine together in integration tests. -->
     <ProjectReference Include="../../src/Abadar.Backend/Abadar.Backend.csproj" />
+    <ProjectReference Include="../../../matching-engine/src/Abadar.MatchingEngine/Abadar.MatchingEngine.csproj" />
   </ItemGroup>
 </Project>

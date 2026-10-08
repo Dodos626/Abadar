@@ -2,9 +2,9 @@
 
 ## Current Status
 
-ABADAR has begun Version 0: the pure in-memory matching engine. The repository also retains the C# ASP.NET Core backend, PostgreSQL persistence through EF Core, React/Next.js frontend, JWT authentication, SignalR updates, and Docker Compose orchestration.
+ABADAR has moved to Version 1: the matching engine is integrated with the ASP.NET Core API and PostgreSQL durable order/trade history. The React/Next.js administrator workspace can generate market activity and inspect the resulting history.
 
-The engine now supports deterministic price-time matching without HTTP, PostgreSQL, Kafka, Redis, or Docker. Exchange persistence, settlement, durable events, replay, real-time market data, and observability remain future work.
+The engine retains deterministic per-symbol ownership while open books are recovered from PostgreSQL at backend startup. Kafka events, portfolio settlement, replay from an event stream, real-time market data, and observability remain future work.
 
 ## Completed Work
 
@@ -57,6 +57,10 @@ POST /api/v1/users
 GET /api/v1/users/:id
 PUT /api/v1/users/:id
 DELETE /api/v1/users/:id
+GET /api/v1/orders
+GET /api/v1/trades
+POST /api/v1/admin/simulations
+POST /api/v1/admin/database/reset
 HUB /hubs/users
 ```
 
@@ -73,6 +77,7 @@ Location: `apps/web`
 - Added loading, degraded-service, and empty states.
 - Added a login interface with the seeded development credentials.
 - Added role-aware user administration and self-profile editing.
+- Added an administrator-only Version 1 market simulator with durable order/trade history and database reset controls.
 - Added same-origin Next.js route handlers that proxy health, market, authentication, and user requests to the .NET backend.
 - Added the SignalR browser client for real-time user updates.
 - Configured runtime backend discovery through `BACKEND_URL`.
@@ -115,6 +120,32 @@ make benchmark-engine
 
 The benchmark is intentionally simple and dependency-free. It measures the pure synchronous order-book path, not HTTP, persistence, settlement, or end-to-end latency.
 
+### Version 1 exchange persistence and administration
+
+- Referenced the matching-engine project from the backend and registered one singleton engine.
+- Added durable `orders` and `trades` tables through an EF Core migration.
+- Persisted every simulated order result, resting-order update, and execution.
+- Added authenticated order and trade history endpoints.
+- Added startup recovery for open and partially-filled orders, FIFO ordering, order sequences, and execution sequences.
+- Added an administrator-only simulation endpoint with symbol, order range, price range, quantity range, sell percentage, market-order percentage, and seed controls.
+- Added an administrator-only reset endpoint that preserves the calling administrator and deletes all other users and exchange data.
+- Added a Next.js administrator simulator with history tables and guarded destructive reset controls.
+- Batched simulation persistence in groups of 250 orders so 2,500–5,000 order runs do not issue one PostgreSQL commit per order.
+- Extended the Next.js proxy timeout for market simulations to 120 seconds and now distinguish operation timeouts from an unavailable backend.
+- Added concise one-line comments across the Version 1 backend models, contracts, endpoint mappings, exchange service methods, persistence configuration, migration, integration tests, matching-engine recovery additions, frontend API types, simulator components, administrator navigation, Dockerfile, Compose services, and root Docker ignore rules.
+- Kept generated EF Core designer and model-snapshot files unchanged because they are regenerated from the annotated source model and should not be hand-edited.
+
+Current Version 1 backend endpoints:
+
+```text
+GET  /api/v1/orders
+GET  /api/v1/trades
+POST /api/v1/admin/simulations
+POST /api/v1/admin/database/reset
+```
+
+The simulator currently supports `BTC/USD`, `ETH/USD`, `SOL/USD`, and `ABR/USD`, bounded order/price/quantity ranges, buy/sell distribution, market-order distribution, and deterministic seeds. Database reset is administrator-only and preserves the authenticated administrator account while clearing all other users, durable orders, durable trades, and active in-memory books.
+
 ### Container orchestration
 
 Location: `docker-compose.yml`
@@ -141,7 +172,7 @@ docker compose up --build
 The current implementation has been validated with:
 
 - .NET 10 restore and production build
-- ASP.NET Core integration tests
+- 12 ASP.NET Core integration tests, including durable restart recovery and multi-batch simulation
 - EF Core migration generation
 - NuGet transitive dependency vulnerability scan
 - ESLint
@@ -153,7 +184,7 @@ The current implementation has been validated with:
 - Backend readiness and market endpoint requests
 - Git whitespace and patch validation
 - Version 0 matching-engine Release build
-- 16 matching correctness and concurrency tests
+- 17 matching correctness and concurrency tests
 - Baseline pure-engine benchmark execution
 - Recorded three baseline benchmark runs in `docs/benchmarks/version-0-baseline.md`
 
@@ -178,15 +209,15 @@ These capabilities should be introduced incrementally when their application req
 
 ## Recommended Next Milestone
 
-Version 0 should remain small. The next work should strengthen the engine before adding infrastructure:
+Version 1 should now be hardened before moving to Kafka or portfolio settlement:
 
-1. Add randomized invariant tests for large order streams.
-2. Decide and document the long-term fixed-precision representation before persistence.
-3. Add cancellation and snapshot stress tests while workers are active.
-4. Run and record repeatable benchmark samples on named hardware.
-5. Only then expose the engine through the backend API.
+1. Add randomized invariants over durable order and trade streams.
+2. Add order cancellation persistence and recovery tests through the HTTP API.
+3. Make each engine mutation and its database write atomic through an explicit durability design, such as an append-only command log or transactional outbox.
+4. Add balances, reservations, and conservation tests before exposing user-submitted trading.
+5. Add real-time order-book and trade updates only after durable mutation semantics are documented.
 
-Event streaming should follow after the in-memory exchange-domain behavior is correct, deterministic, and benchmarkable. PostgreSQL is already available for durable application state.
+Event streaming should follow once Version 1 recovery, idempotency boundaries, and financial invariants are explicit and tested.
 
 ## High-Level Progress Summary
 
@@ -205,10 +236,12 @@ Event streaming should follow after the in-memory exchange-domain behavior is co
 | Docker runtime validation | Complete |
 | Exchange domain model | Version 0 complete |
 | Order book and matching engine | Version 0 complete |
-| Matching correctness tests | Complete (16 passing) |
+| Matching correctness tests | Complete (17 passing) |
 | Symbol-worker concurrency | Complete |
 | Pure-engine baseline benchmark | Complete |
-| Exchange persistence and event streaming | Not started |
+| Exchange persistence and recovery | Version 1 complete |
+| Admin market simulator and database reset | Complete |
+| Event streaming | Not started |
 | Real-time WebSocket data | Not started |
 | Production observability | Not started |
 | Load, recovery, and chaos testing | Not started |

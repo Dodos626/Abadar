@@ -5,8 +5,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Abadar.Backend.Endpoints;
 
+// Maps service metadata, health checks, and the temporary market snapshot.
 public static class SystemEndpoints
 {
+    // Registers public operational endpoints and API discovery links.
     public static IEndpointRouteBuilder MapSystemEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/v1", (ApplicationMetadata metadata) => Results.Ok(new
@@ -21,6 +23,9 @@ public static class SystemEndpoints
                 ["markets"] = "/api/v1/markets",
                 ["login"] = "/api/v1/auth/login",
                 ["users"] = "/api/v1/users",
+                ["orders"] = "/api/v1/orders",
+                ["trades"] = "/api/v1/trades",
+                ["admin_simulations"] = "/api/v1/admin/simulations",
                 ["users_hub"] = "/hubs/users"
             }
         }));
@@ -57,6 +62,7 @@ public static class SystemEndpoints
         return endpoints;
     }
 
+    // Builds a consistent health response with calculated process uptime.
     private static HealthResponse CreateHealthResponse(
         ApplicationMetadata metadata,
         IReadOnlyDictionary<string, string>? checks = null)

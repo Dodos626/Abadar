@@ -24,10 +24,12 @@ const userNavigation: NavItem[] = [
 const adminNavigation: NavItem[] = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/admin/users", label: "Users" },
+  { href: "/admin/simulator", label: "Simulator" },
   { href: "/markets", label: "Markets" },
   { href: "/account", label: "Account" },
 ];
 
+// Renders role-aware navigation including the administrator simulator workspace.
 export function SiteHeader() {
   const { status, user, logout } = useAuth();
   const pathname = usePathname();
@@ -39,6 +41,7 @@ export function SiteHeader() {
         : userNavigation
       : publicNavigation;
 
+  // Clears the browser session and returns the user to the landing page.
   function signOut() {
     logout();
     router.push("/");

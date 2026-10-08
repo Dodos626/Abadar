@@ -100,6 +100,46 @@ public sealed class OrderBook
         Snapshot(_bids),
         Snapshot(_asks));
 
+    // Reconstructs an empty book from durable open orders without matching them again.
+    public void Recover(
+        IReadOnlyList<RecoveredOrder> orders,
+        long lastOrderSequence,
+        long lastExecutionSequence)
+    {
+        if (_seenOrderIds.Count > 0 || _bids.Count > 0 || _asks.Count > 0)
+            throw new InvalidOperationException("Recovery requires an empty order book.");
+        if (lastOrderSequence < 0 || lastExecutionSequence < 0)
+            throw new ArgumentOutOfRangeException(nameof(lastOrderSequence));
+
+        _nextSequence = lastOrderSequence;
+
+        foreach (var recovered in orders.OrderBy(value => value.Sequence))
+        {
+            ValidateRecovered(recovered);
+            var order = new Order(recovered.Request, recovered.Sequence)
+            {
+                RemainingQuantity = recovered.RemainingQuantity,
+                Status = recovered.Status
+            };
+            _seenOrderIds.Add(order.Id);
+            _nextSequence = Math.Max(_nextSequence, order.Sequence);
+            Add(order);
+        }
+
+        _nextExecutionSequence = lastExecutionSequence;
+    }
+
+    // Clears all mutable state while preserving the book's trading symbol.
+    public void Reset()
+    {
+        _bids.Clear();
+        _asks.Clear();
+        _orders.Clear();
+        _seenOrderIds.Clear();
+        _nextSequence = 0;
+        _nextExecutionSequence = 0;
+    }
+
     // Matches an incoming order against one FIFO price level.
     private void MatchLevel(
         Order incoming,
@@ -185,6 +225,26 @@ public sealed class OrderBook
             throw new ArgumentException("A market order cannot have a price.", nameof(request));
         if (_seenOrderIds.Contains(request.Id))
             throw new InvalidOperationException("An order with this ID was already submitted.");
+    }
+
+    // Validates durable state before it is inserted into the active book.
+    private void ValidateRecovered(RecoveredOrder recovered)
+    {
+        var request = recovered.Request;
+        if (request.Id == Guid.Empty || request.AccountId == Guid.Empty)
+            throw new ArgumentException("Recovered order and account IDs are required.");
+        if (!string.Equals(NormalizeSymbol(request.Symbol), Symbol, StringComparison.Ordinal))
+            throw new ArgumentException($"Recovered order symbol must be {Symbol}.");
+        if (request.Type != OrderType.Limit || request.Price is null or <= 0)
+            throw new ArgumentException("Only priced limit orders can be recovered.");
+        if (recovered.Sequence <= 0 || recovered.RemainingQuantity <= 0)
+            throw new ArgumentException("Recovered sequence and remaining quantity must be positive.");
+        if (recovered.RemainingQuantity > request.Quantity)
+            throw new ArgumentException("Recovered quantity cannot exceed the original quantity.");
+        if (recovered.Status is not (OrderStatus.Open or OrderStatus.PartiallyFilled))
+            throw new ArgumentException("Only open or partially filled orders can be recovered.");
+        if (_seenOrderIds.Contains(request.Id))
+            throw new InvalidOperationException("A recovered order ID was duplicated.");
     }
 
     // Trims and uppercases a required trading symbol.

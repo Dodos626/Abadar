@@ -4,13 +4,23 @@
 
 > **ABADAR** is a distributed, real-time market simulation platform designed to model the core infrastructure of a modern electronic exchange.
 
-## Current Full-Stack Bootstrap
+## Current Version — Version 1 Persistent Exchange
 
-The repository currently includes a production-shaped full stack with persistence and user management:
+The repository now runs the matching engine as a Version 1 persistent exchange:
 
-* `apps/backend` — C# ASP.NET Core backend using dependency injection, EF Core, PostgreSQL, JWT authentication, role authorization, SignalR, health endpoints, and a user CRUD API.
-* `apps/web` — React/Next.js App Router frontend with login, role-aware user administration, profile editing, and real-time SignalR user updates.
+* `apps/matching-engine` — deterministic price-time-priority engine with per-symbol workers, recovery, and reset support.
+* `apps/backend` — C# ASP.NET Core backend integrating the engine with EF Core/PostgreSQL durable orders and immutable trades, startup recovery, JWT authorization, SignalR, and administration APIs.
+* `apps/web` — React/Next.js App Router frontend with login, user administration, profile editing, market history, and an administrator market simulator.
 * `docker-compose.yml` — builds and runs PostgreSQL, the backend, and the frontend with health checks and an isolated bridge network.
+
+Version 1 currently provides:
+
+* durable order history and trade history in PostgreSQL
+* restoration of every open/partially-filled order, FIFO queue position, order sequence, and trade sequence when the backend starts
+* administrator-controlled simulations for selected symbols, order-count ranges, price/quantity ranges, buy/sell distribution, market-order distribution, and deterministic random seeds
+* an administrator-only destructive reset that removes orders, trades, and every other user while preserving the authenticated administrator account
+
+The Version 1 durability boundary is PostgreSQL. A simulation order is acknowledged only after the resulting order updates and trades have been saved. Kafka/event replay and snapshots remain Version 2+ work.
 
 Start the complete stack:
 
@@ -27,6 +37,9 @@ Then open:
 * Markets: `http://localhost:8080/api/v1/markets`
 * Login: `POST http://localhost:8080/api/v1/auth/login`
 * Users: `http://localhost:8080/api/v1/users`
+* Order history: `http://localhost:8080/api/v1/orders`
+* Trade history: `http://localhost:8080/api/v1/trades`
+* Admin simulator: `http://localhost:3000/admin/simulator`
 * PostgreSQL host port: `localhost:55432`
 
 Seeded development credentials:
@@ -45,7 +58,7 @@ make test
 make build
 ```
 
-PostgreSQL is now included because the user and authentication workflows require durable state and uniqueness constraints. Kafka, Redis, and the observability stack remain deferred until application behavior requires them.
+PostgreSQL is the source of truth for Version 1 order and trade history. Active books remain in memory for matching speed and are rebuilt from durable open orders on startup. Kafka, Redis, and the observability stack remain deferred until application behavior requires them.
 
 The project focuses on **correctness, concurrency, distributed systems, fault tolerance, observability, and measurable performance** rather than simply building a trading dashboard.
 
@@ -419,10 +432,27 @@ Matching Engine
 
 Focus:
 
-* durable state
-* order history
-* trade history
-* recovery
+* ✓ durable PostgreSQL order state
+* ✓ immutable trade history
+* ✓ authenticated order/trade history APIs
+* ✓ recovery of open books and deterministic sequences on startup
+* ✓ administrator market simulation and test-data reset
+
+Current recovery flow:
+
+```text
+backend start
+    ↓
+apply EF Core migrations
+    ↓
+load durable open / partially-filled orders
+    ↓
+restore price levels in original sequence order
+    ↓
+restore last order and execution sequence per symbol
+    ↓
+accept new simulations and orders
+```
 
 ---
 
