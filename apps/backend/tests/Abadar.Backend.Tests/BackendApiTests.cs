@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Abadar.Backend.Data;
+using Abadar.Backend.Events;
 using Abadar.Backend.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Abadar.MatchingEngine;
+using Abadar.Backend.Services;
 using Xunit;
 
 // Exercises operational, authentication, administration, persistence, and recovery API flows.
@@ -246,6 +248,80 @@ public sealed class BackendApiTests
     }
 
     [Fact]
+    // Verifies business writes create durable order and trade outbox events.
+    public async Task Simulation_CreatesDurableOutboxEvents()
+    {
+        var factory = new BackendWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var adminLogin = await LoginAsync(client, "admin", "admin123");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            adminLogin.AccessToken);
+        using var response = await client.PostAsync(
+            "/api/v1/admin/simulations",
+            JsonContent.Create(
+                new SimulateMarketRequest(
+                    ["BTC/USD"],
+                    2,
+                    2,
+                    100,
+                    100,
+                    1,
+                    1,
+                    50,
+                    0,
+                    5),
+                options: JsonOptions));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AbadarDbContext>();
+        var outbox = await dbContext.OutboxEvents.AsNoTracking().ToListAsync();
+
+        Assert.Equal(2, outbox.Count(value => value.EventType == EventCatalog.OrderAcceptedV1));
+        Assert.Single(outbox, value => value.EventType == EventCatalog.TradeExecutedV1);
+        Assert.All(outbox, value => Assert.Null(value.PublishedAt));
+    }
+
+    [Fact]
+    // Verifies duplicate trade delivery changes each projection only once.
+    public async Task TradeProjectionProcessor_IsIdempotent()
+    {
+        var factory = new BackendWebApplicationFactory();
+        using var client = factory.CreateClient();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var processor = scope.ServiceProvider.GetRequiredService<Abadar.Backend.Services.TradeProjectionProcessor>();
+        var eventId = Guid.NewGuid();
+        var envelope = new EventEnvelope<TradeExecutedEvent>(
+            eventId,
+            EventCatalog.TradeExecutedV1,
+            DateTimeOffset.UtcNow,
+            Guid.NewGuid().ToString(),
+            "trade",
+            1,
+            1,
+            new TradeExecutedEvent(
+                Guid.NewGuid(),
+                "BTC/USD",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                100,
+                2));
+
+        Assert.True(await processor.ProcessAsync("analytics", envelope, CancellationToken.None));
+        Assert.False(await processor.ProcessAsync("analytics", envelope, CancellationToken.None));
+
+        var dbContext = scope.ServiceProvider.GetRequiredService<AbadarDbContext>();
+        var projection = await dbContext.AnalyticsProjections.SingleAsync();
+        Assert.Equal(1, projection.TradeCount);
+        Assert.Equal(2, projection.TotalQuantity);
+        Assert.Equal(200, projection.TotalNotional);
+        Assert.Single(await dbContext.ProcessedEvents.ToListAsync());
+    }
+
+    [Fact]
     // Verifies reset removes all data except the calling administrator account.
     public async Task DatabaseReset_PreservesCallingAdminOnly()
     {
@@ -410,6 +486,8 @@ public sealed class BackendWebApplicationFactory : WebApplicationFactory<Program
                 options.UseInMemoryDatabase(_databaseName, _databaseRoot));
             services.RemoveAll<IMatchingEngine>();
             services.AddSingleton<IMatchingEngine, MatchingEngine>();
+            services.RemoveAll<KafkaOptions>();
+            services.AddSingleton(new KafkaOptions("unused:9092", false, 3, 1));
             if (_recoverExchange)
             {
                 services.RemoveAll<IDatabaseInitializer>();

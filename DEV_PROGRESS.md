@@ -2,9 +2,9 @@
 
 ## Current Status
 
-ABADAR has moved to Version 1: the matching engine is integrated with the ASP.NET Core API and PostgreSQL durable order/trade history. The React/Next.js administrator workspace can generate market activity and inspect the resulting history.
+ABADAR has moved to Version 2: matching persistence now writes versioned integration events to a PostgreSQL transactional outbox, Kafka distributes the streams, and independent portfolio, market, and analytics consumers build idempotent projections.
 
-The engine retains deterministic per-symbol ownership while open books are recovered from PostgreSQL at backend startup. Kafka events, portfolio settlement, replay from an event stream, real-time market data, and observability remain future work.
+The engine retains deterministic per-symbol ownership while open books recover from PostgreSQL. Kafka records use the trading symbol as their partition key, consumers commit offsets after projection persistence, and replay rebuilds derived state from retained trade events. Full balance settlement, WebSocket market data, and observability remain future work.
 
 ## Completed Work
 
@@ -146,6 +146,21 @@ POST /api/v1/admin/database/reset
 
 The simulator currently supports `BTC/USD`, `ETH/USD`, `SOL/USD`, and `ABR/USD`, bounded order/price/quantity ranges, buy/sell distribution, market-order distribution, and deterministic seeds. Database reset is administrator-only and preserves the authenticated administrator account while clearing all other users, durable orders, durable trades, and active in-memory books.
 
+### Version 2 event-driven exchange
+
+- Added Apache Kafka 4.1.1 in single-node KRaft mode to Docker Compose with durable broker storage and health checks.
+- Added `Confluent.Kafka` producers, consumers, and topic administration to the .NET backend.
+- Added versioned `OrderAccepted.v1` and `TradeExecuted.v1` envelopes with global event IDs, aggregate metadata, sequences, and schema versions.
+- Added a PostgreSQL transactional outbox so orders, trades, and publication intent commit together.
+- Added an idempotent outbox publisher using Kafka acknowledgements and symbol partition keys.
+- Added independent `abadar-portfolio`, `abadar-market`, and `abadar-analytics` consumer groups over `abadar.trades`.
+- Added `processed_events` markers keyed by consumer and event ID so duplicate delivery cannot update a projection twice.
+- Added portfolio positions, market ticker projections, and analytics projections as eventually consistent read models.
+- Added administrator Kafka/outbox status and replay endpoints plus replay controls in the simulator UI.
+- Added dedicated replay consumers that clear derived state and idempotency markers, read retained Kafka partitions from their beginning, and rebuild the selected projection.
+- Added `docs/adr/009-transactional-outbox-kafka.md` documenting the dual-write decision.
+- Added `docs/code-reading-guide.md` with a step-by-step learning path through matching, persistence, outbox publication, consumers, idempotency, and replay.
+
 ### Container orchestration
 
 Location: `docker-compose.yml`
@@ -172,7 +187,8 @@ docker compose up --build
 The current implementation has been validated with:
 
 - .NET 10 restore and production build
-- 12 ASP.NET Core integration tests, including durable restart recovery and multi-batch simulation
+- 14 ASP.NET Core integration tests, including durable restart recovery, multi-batch simulation, outbox creation, and consumer idempotency
+- Version 2 outbox and duplicate-consumer idempotency integration tests
 - EF Core migration generation
 - NuGet transitive dependency vulnerability scan
 - ESLint
@@ -194,12 +210,11 @@ The .NET 10 SDK is installed in WSL under the current user's home directory and 
 
 The following components are intentionally not part of the bootstrap:
 
-- Kafka or another event-streaming platform
 - Redis
 - Portfolio and balance management
 - WebSocket market data
-- Durable domain events
-- Event replay and snapshots
+- Full quote/base balance settlement
+- Matching-engine snapshots
 - Prometheus metrics
 - OpenTelemetry tracing
 - Grafana dashboards
@@ -209,13 +224,13 @@ These capabilities should be introduced incrementally when their application req
 
 ## Recommended Next Milestone
 
-Version 1 should now be hardened before moving to Kafka or portfolio settlement:
+Version 2 should now be hardened before splitting consumers into separate deployable services:
 
 1. Add randomized invariants over durable order and trade streams.
 2. Add order cancellation persistence and recovery tests through the HTTP API.
-3. Make each engine mutation and its database write atomic through an explicit durability design, such as an append-only command log or transactional outbox.
+3. Add outbox retention, dead-letter handling, and consumer-lag visibility.
 4. Add balances, reservations, and conservation tests before exposing user-submitted trading.
-5. Add real-time order-book and trade updates only after durable mutation semantics are documented.
+5. Add real-time order-book and trade updates sourced from Version 2 events.
 
 Event streaming should follow once Version 1 recovery, idempotency boundaries, and financial invariants are explicit and tested.
 
@@ -241,7 +256,10 @@ Event streaming should follow once Version 1 recovery, idempotency boundaries, a
 | Pure-engine baseline benchmark | Complete |
 | Exchange persistence and recovery | Version 1 complete |
 | Admin market simulator and database reset | Complete |
-| Event streaming | Not started |
+| Event streaming | Version 2 complete |
+| Transactional outbox | Complete |
+| Idempotent consumers | Complete |
+| Projection replay | Complete |
 | Real-time WebSocket data | Not started |
 | Production observability | Not started |
 | Load, recovery, and chaos testing | Not started |

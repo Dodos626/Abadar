@@ -55,6 +55,9 @@ builder.Services.AddDbContext<AbadarDbContext>(options =>
 
 var jwtOptions = JwtOptions.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(jwtOptions);
+var kafkaOptions = KafkaOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(kafkaOptions);
+builder.Services.AddSingleton<KafkaRuntimeState>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -112,6 +115,13 @@ builder.Services.AddScoped<IUserEvents, SignalRUserEvents>();
 builder.Services.AddSingleton<IMatchingEngine, MatchingEngine>();
 // Creates a scoped persistence coordinator around the singleton matching engine.
 builder.Services.AddScoped<IExchangeService, ExchangeService>();
+builder.Services.AddScoped<TradeProjectionProcessor>();
+builder.Services.AddScoped<IEventReplayService, EventReplayService>();
+builder.Services.AddHostedService<KafkaTopicInitializer>();
+builder.Services.AddHostedService<OutboxPublisher>();
+builder.Services.AddHostedService<PortfolioTradeConsumer>();
+builder.Services.AddHostedService<MarketTradeConsumer>();
+builder.Services.AddHostedService<AnalyticsTradeConsumer>();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddProblemDetails();
 

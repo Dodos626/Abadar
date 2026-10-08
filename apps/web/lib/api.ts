@@ -97,6 +97,31 @@ export type ResetDatabaseResponse = {
   trades_deleted: number;
 };
 
+// Reports one consumer projection's processed-event count.
+export type ConsumerProgress = {
+  consumer: string;
+  processed_events: number;
+};
+
+// Reports Kafka, outbox, and consumer progress for Version 2 operations.
+export type EventSystemStatus = {
+  kafka_enabled: boolean;
+  topics_ready: boolean;
+  publisher_connected: boolean;
+  last_error: string | null;
+  outbox_pending: number;
+  outbox_published: number;
+  consumers: ConsumerProgress[];
+};
+
+// Reports a requested projection replay reset.
+export type EventReplayResponse = {
+  consumer: string;
+  processed_events_cleared: number;
+  events_replayed: number;
+  requested_at: string;
+};
+
 export class ApiRequestError extends Error {
   constructor(
     message: string,

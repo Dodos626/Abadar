@@ -1,4 +1,4 @@
-.PHONY: up down reset logs ps test test-backend test-engine benchmark-engine lint build migration database-update clean
+.PHONY: up down reset logs ps kafka-topics test test-backend test-engine benchmark-engine lint build migration database-update clean
 
 up:
 	docker compose up --build -d
@@ -14,6 +14,9 @@ logs:
 
 ps:
 	docker compose ps
+
+kafka-topics:
+	docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list
 
 test: test-backend test-engine lint
 

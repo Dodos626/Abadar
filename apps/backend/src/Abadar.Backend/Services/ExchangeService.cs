@@ -1,4 +1,5 @@
 using Abadar.Backend.Data;
+using Abadar.Backend.Events;
 using Abadar.Backend.Models;
 using Abadar.MatchingEngine;
 using Microsoft.EntityFrameworkCore;
@@ -284,8 +285,18 @@ public sealed class ExchangeService(
 
             var trades = await dbContext.Trades.ToListAsync(cancellationToken);
             var orders = await dbContext.Orders.ToListAsync(cancellationToken);
+            var outboxEvents = await dbContext.OutboxEvents.ToListAsync(cancellationToken);
+            var processedEvents = await dbContext.ProcessedEvents.ToListAsync(cancellationToken);
+            var positions = await dbContext.PortfolioPositions.ToListAsync(cancellationToken);
+            var marketProjections = await dbContext.MarketProjections.ToListAsync(cancellationToken);
+            var analyticsProjections = await dbContext.AnalyticsProjections.ToListAsync(cancellationToken);
             dbContext.Trades.RemoveRange(trades);
             dbContext.Orders.RemoveRange(orders);
+            dbContext.OutboxEvents.RemoveRange(outboxEvents);
+            dbContext.ProcessedEvents.RemoveRange(processedEvents);
+            dbContext.PortfolioPositions.RemoveRange(positions);
+            dbContext.MarketProjections.RemoveRange(marketProjections);
+            dbContext.AnalyticsProjections.RemoveRange(analyticsProjections);
             dbContext.Users.RemoveRange(users);
             await dbContext.SaveChangesAsync(cancellationToken);
             await matchingEngine.ResetAsync(cancellationToken);
@@ -328,14 +339,36 @@ public sealed class ExchangeService(
             UpdatedAt = now
         };
         dbContext.Orders.Add(incoming);
+        dbContext.OutboxEvents.Add(IntegrationEventFactory.Create(
+            new EventEnvelope<OrderAcceptedEvent>(
+                Guid.NewGuid(),
+                EventCatalog.OrderAcceptedV1,
+                now,
+                request.Id.ToString(),
+                "order",
+                result.Sequence,
+                1,
+                new OrderAcceptedEvent(
+                    request.Id,
+                    request.AccountId,
+                    incoming.Symbol,
+                    incoming.Side,
+                    incoming.Type,
+                    incoming.Price,
+                    incoming.Quantity,
+                    incoming.RemainingQuantity,
+                    incoming.Status)),
+            EventCatalog.OrdersTopic,
+            incoming.Symbol));
 
         var restingOrderIds = result.Executions
             .Select(execution => request.Side == OrderSide.Buy ? execution.SellOrderId : execution.BuyOrderId)
             .Distinct()
             .ToArray();
+        var restingOrders = new Dictionary<Guid, ExchangeOrder>();
         if (restingOrderIds.Length > 0)
         {
-            var restingOrders = dbContext.Orders.Local
+            restingOrders = dbContext.Orders.Local
                 .Where(order => restingOrderIds.Contains(order.Id))
                 .ToDictionary(order => order.Id);
             var missingOrderIds = restingOrderIds
@@ -368,16 +401,47 @@ public sealed class ExchangeService(
             }
         }
 
-        dbContext.Trades.AddRange(result.Executions.Select(execution => new ExchangeTrade
+        foreach (var execution in result.Executions)
         {
-            Symbol = execution.Symbol,
-            BuyOrderId = execution.BuyOrderId,
-            SellOrderId = execution.SellOrderId,
-            Price = execution.Price,
-            Quantity = execution.Quantity,
-            Sequence = execution.Sequence,
-            ExecutedAt = now
-        }));
+            var trade = new ExchangeTrade
+            {
+                Symbol = execution.Symbol,
+                BuyOrderId = execution.BuyOrderId,
+                SellOrderId = execution.SellOrderId,
+                Price = execution.Price,
+                Quantity = execution.Quantity,
+                Sequence = execution.Sequence,
+                ExecutedAt = now
+            };
+            dbContext.Trades.Add(trade);
+
+            var buyAccountId = execution.BuyOrderId == request.Id
+                ? request.AccountId
+                : restingOrders[execution.BuyOrderId].AccountId;
+            var sellAccountId = execution.SellOrderId == request.Id
+                ? request.AccountId
+                : restingOrders[execution.SellOrderId].AccountId;
+            dbContext.OutboxEvents.Add(IntegrationEventFactory.Create(
+                new EventEnvelope<TradeExecutedEvent>(
+                    Guid.NewGuid(),
+                    EventCatalog.TradeExecutedV1,
+                    now,
+                    trade.Id.ToString(),
+                    "trade",
+                    trade.Sequence,
+                    1,
+                    new TradeExecutedEvent(
+                        trade.Id,
+                        trade.Symbol,
+                        trade.BuyOrderId,
+                        trade.SellOrderId,
+                        buyAccountId,
+                        sellAccountId,
+                        trade.Price,
+                        trade.Quantity)),
+                EventCatalog.TradesTopic,
+                trade.Symbol));
+        }
 
         return result;
     }

@@ -129,6 +129,49 @@ public sealed record ResetDatabaseResponse(
     int OrdersDeleted,
     int TradesDeleted);
 
+// Reports one consumer projection's processed-event count.
+public sealed record ConsumerProgressResponse(string Consumer, int ProcessedEvents);
+
+// Reports Kafka, outbox, and consumer projection health to administrators.
+public sealed record EventSystemStatusResponse(
+    bool KafkaEnabled,
+    bool TopicsReady,
+    bool PublisherConnected,
+    string? LastError,
+    int OutboxPending,
+    int OutboxPublished,
+    IReadOnlyList<ConsumerProgressResponse> Consumers);
+
+// Reports a requested projection replay reset.
+public sealed record EventReplayResponse(
+    string Consumer,
+    int ProcessedEventsCleared,
+    int EventsReplayed,
+    DateTimeOffset RequestedAt);
+
+// Exposes one eventually consistent portfolio position.
+public sealed record PortfolioPositionResponse(
+    Guid AccountId,
+    string Asset,
+    decimal Quantity,
+    DateTimeOffset UpdatedAt);
+
+// Exposes one eventually consistent market ticker projection.
+public sealed record MarketProjectionResponse(
+    string Symbol,
+    decimal LastPrice,
+    decimal Volume,
+    long TradeCount,
+    DateTimeOffset UpdatedAt);
+
+// Exposes one eventually consistent analytics projection.
+public sealed record AnalyticsProjectionResponse(
+    string Symbol,
+    long TradeCount,
+    decimal TotalQuantity,
+    decimal TotalNotional,
+    DateTimeOffset UpdatedAt);
+
 public sealed record ApiError(
     string Code,
     string Message,

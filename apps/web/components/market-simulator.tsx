@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import { useAuth } from "@/components/auth-provider";
 import {
   apiRequest,
+  type EventReplayResponse,
+  type EventSystemStatus,
   type OrderHistory,
   type ResetDatabaseResponse,
   type SimulationRequest,
@@ -38,6 +40,7 @@ export function MarketSimulator() {
   const [busy, setBusy] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [eventStatus, setEventStatus] = useState<EventSystemStatus | null>(null);
 
   // Filters history automatically when exactly one trading pair is selected.
   const selectedSymbol = useMemo(
@@ -66,11 +69,24 @@ export function MarketSimulator() {
     }
   }, [selectedSymbol, token]);
 
+  // Loads Kafka, outbox, and consumer projection progress for administrators.
+  const loadEventStatus = useCallback(async () => {
+    if (!token) return;
+    try {
+      setEventStatus(await apiRequest<EventSystemStatus>("/admin/events/status", {}, token));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Event status could not be loaded.");
+    }
+  }, [token]);
+
   // Refreshes history when authentication or the single-symbol filter changes.
   useEffect(() => {
-    const timeout = window.setTimeout(() => void loadHistory(), 0);
+    const timeout = window.setTimeout(() => {
+      void loadHistory();
+      void loadEventStatus();
+    }, 0);
     return () => window.clearTimeout(timeout);
-  }, [loadHistory]);
+  }, [loadEventStatus, loadHistory]);
 
   // Submits the configured simulation and refreshes its resulting history.
   async function simulate(event: FormEvent<HTMLFormElement>) {
@@ -87,6 +103,7 @@ export function MarketSimulator() {
       setResult(response);
       setMessage(`Submitted ${response.orders_submitted} orders and executed ${response.trades_executed} trades.`);
       await loadHistory();
+      await loadEventStatus();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The simulation could not be started.");
     } finally {
@@ -131,6 +148,25 @@ export function MarketSimulator() {
         ? current.symbols.filter((value) => value !== symbol)
         : [...current.symbols, symbol],
     }));
+  }
+
+  // Clears one projection and asks its Kafka consumer to replay the trade stream.
+  async function replay(consumer: string) {
+    if (!token || !window.confirm(`Rebuild the ${consumer} projection from Kafka?`)) return;
+    setBusy(true);
+    try {
+      const response = await apiRequest<EventReplayResponse>(
+        `/admin/events/replay/${consumer}`,
+        { method: "POST" },
+        token,
+      );
+      setMessage(`Rebuilt ${response.consumer} from ${response.events_replayed} Kafka events after clearing ${response.processed_events_cleared} markers.`);
+      await loadEventStatus();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Replay could not be requested.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -198,6 +234,37 @@ export function MarketSimulator() {
               </article>
             ))}
           </div>
+        )}
+      </section>
+
+      <section className="contentPanel">
+        <div className="panelHeading">
+          <div>
+            <p className="eyebrow">VERSION 2 EVENT STREAM</p>
+            <h2>Kafka and consumers</h2>
+            <p>Inspect durable publication and rebuild eventually consistent projections.</p>
+          </div>
+          <button className="button buttonSecondary buttonSmall" onClick={() => void loadEventStatus()} type="button">
+            Refresh events
+          </button>
+        </div>
+        {eventStatus ? (
+          <div className="eventStatusGrid">
+            <article><b>Kafka</b><span>{eventStatus.topics_ready ? "Topics ready" : "Starting"}</span></article>
+            <article><b>Outbox pending</b><span>{eventStatus.outbox_pending}</span></article>
+            <article><b>Published</b><span>{eventStatus.outbox_published}</span></article>
+            {eventStatus.consumers.map((consumer) => (
+              <article key={consumer.consumer}>
+                <b>{consumer.consumer}</b>
+                <span>{consumer.processed_events} processed events</span>
+                <button className="textButton" disabled={busy} onClick={() => void replay(consumer.consumer)} type="button">
+                  Replay
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="emptyState">Loading event status…</div>
         )}
       </section>
 

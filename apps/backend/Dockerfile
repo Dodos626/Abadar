@@ -24,7 +24,8 @@ ENV DOTNET_EnableDiagnostics=0
 
 # Run the published backend as an unprivileged application user.
 RUN addgroup -S abadar \
-    && adduser -S -G abadar -u 10001 abadar
+    && adduser -S -G abadar -u 10001 abadar \
+    && apk add --no-cache krb5-libs
 
 COPY --from=build /app/publish .
 

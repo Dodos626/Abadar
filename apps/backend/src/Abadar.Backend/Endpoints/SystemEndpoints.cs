@@ -1,6 +1,7 @@
 using System.Globalization;
 using Abadar.Backend.Data;
 using Abadar.Backend.Models;
+using Abadar.Backend.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Abadar.Backend.Endpoints;
@@ -26,6 +27,10 @@ public static class SystemEndpoints
                 ["orders"] = "/api/v1/orders",
                 ["trades"] = "/api/v1/trades",
                 ["admin_simulations"] = "/api/v1/admin/simulations",
+                ["admin_event_status"] = "/api/v1/admin/events/status",
+                ["portfolio"] = "/api/v1/portfolio/positions",
+                ["market_projection"] = "/api/v1/market/projections",
+                ["analytics"] = "/api/v1/analytics/projections",
                 ["users_hub"] = "/hubs/users"
             }
         }));
@@ -36,13 +41,18 @@ public static class SystemEndpoints
         endpoints.MapGet("/api/v1/health/ready", async (
             ApplicationMetadata metadata,
             AbadarDbContext dbContext,
+            KafkaOptions kafkaOptions,
+            KafkaRuntimeState kafkaRuntimeState,
             CancellationToken cancellationToken) =>
         {
             var databaseReady = await dbContext.Database.CanConnectAsync(cancellationToken);
             var checks = new Dictionary<string, string>
             {
                 ["http_server"] = "up",
-                ["postgresql"] = databaseReady ? "up" : "down"
+                ["postgresql"] = databaseReady ? "up" : "down",
+                ["kafka"] = !kafkaOptions.Enabled
+                    ? "disabled"
+                    : kafkaRuntimeState.TopicsReady ? "up" : "starting"
             };
 
             return databaseReady

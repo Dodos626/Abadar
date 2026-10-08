@@ -4,14 +4,14 @@
 
 > **ABADAR** is a distributed, real-time market simulation platform designed to model the core infrastructure of a modern electronic exchange.
 
-## Current Version — Version 1 Persistent Exchange
+## Current Version — Version 2 Event-Driven Exchange
 
-The repository now runs the matching engine as a Version 1 persistent exchange:
+The repository now runs the matching engine as a Version 2 event-driven exchange:
 
 * `apps/matching-engine` — deterministic price-time-priority engine with per-symbol workers, recovery, and reset support.
-* `apps/backend` — C# ASP.NET Core backend integrating the engine with EF Core/PostgreSQL durable orders and immutable trades, startup recovery, JWT authorization, SignalR, and administration APIs.
-* `apps/web` — React/Next.js App Router frontend with login, user administration, profile editing, market history, and an administrator market simulator.
-* `docker-compose.yml` — builds and runs PostgreSQL, the backend, and the frontend with health checks and an isolated bridge network.
+* `apps/backend` — C# ASP.NET Core backend integrating the engine with PostgreSQL, a transactional event outbox, Kafka producers/consumers, replay, idempotent projections, JWT authorization, SignalR, and administration APIs.
+* `apps/web` — React/Next.js App Router frontend with login, user administration, profile editing, market history, simulation, event status, and projection replay controls.
+* `docker-compose.yml` — builds and runs PostgreSQL, Kafka in KRaft mode, the backend, and the frontend with health checks and an isolated bridge network.
 
 Version 1 currently provides:
 
@@ -20,7 +20,17 @@ Version 1 currently provides:
 * administrator-controlled simulations for selected symbols, order-count ranges, price/quantity ranges, buy/sell distribution, market-order distribution, and deterministic random seeds
 * an administrator-only destructive reset that removes orders, trades, and every other user while preserving the authenticated administrator account
 
-The Version 1 durability boundary is PostgreSQL. A simulation order is acknowledged only after the resulting order updates and trades have been saved. Kafka/event replay and snapshots remain Version 2+ work.
+Version 2 adds:
+
+* versioned `OrderAccepted.v1` and `TradeExecuted.v1` event envelopes
+* a PostgreSQL transactional outbox committed with matching-engine state
+* Kafka topics partitioned by trading symbol
+* independent portfolio, market-data, and analytics consumer groups
+* `(consumer, event_id)` idempotency markers for duplicate delivery
+* replayable derived projections without deleting authoritative order/trade history
+* administrator event-stream status and replay controls
+
+The Version 2 durability boundary is PostgreSQL plus the outbox. A simulation is acknowledged after order, trade, and outbox rows commit. Kafka publication is asynchronous and retried until acknowledged.
 
 Start the complete stack:
 
@@ -41,6 +51,8 @@ Then open:
 * Trade history: `http://localhost:8080/api/v1/trades`
 * Admin simulator: `http://localhost:3000/admin/simulator`
 * PostgreSQL host port: `localhost:55432`
+* Kafka host port: `localhost:9092`
+* Code reading guide: [`docs/code-reading-guide.md`](docs/code-reading-guide.md)
 
 Seeded development credentials:
 
@@ -58,7 +70,7 @@ make test
 make build
 ```
 
-PostgreSQL is the source of truth for Version 1 order and trade history. Active books remain in memory for matching speed and are rebuilt from durable open orders on startup. Kafka, Redis, and the observability stack remain deferred until application behavior requires them.
+PostgreSQL remains the source of truth for order/trade history and unpublished event intent. Active books remain in memory and recover from open orders. Kafka is the durable integration stream for eventually consistent portfolio, market, and analytics projections. Redis and the observability stack remain deferred.
 
 The project focuses on **correctness, concurrency, distributed systems, fault tolerance, observability, and measurable performance** rather than simply building a trading dashboard.
 
@@ -471,10 +483,32 @@ Portfolio Market Analytics
 
 Focus:
 
-* events
-* consumers
-* replay
-* idempotency
+* ✓ versioned event envelopes
+* ✓ PostgreSQL transactional outbox
+* ✓ Kafka topics keyed by trading symbol
+* ✓ portfolio, market, and analytics consumers
+* ✓ replayable derived projections
+* ✓ idempotent duplicate processing through `processed_events`
+
+Implemented flow:
+
+```text
+Matching Engine
+       │
+       ▼
+PostgreSQL transaction
+  orders + trades + outbox
+       │
+       ▼
+Outbox Publisher
+       │
+       ▼
+     Kafka
+       │
+ ┌─────┼─────┐
+ ▼     ▼     ▼
+Portfolio Market Analytics
+```
 
 ---
 
@@ -1127,7 +1161,7 @@ unless sufficient funds remain.
 
 # Event Architecture
 
-ABADAR should eventually use domain events.
+ABADAR uses versioned integration events for Version 2 projections.
 
 Example:
 
@@ -1197,20 +1231,20 @@ Do not silently change the schema of an existing event.
 
 # Kafka Architecture
 
-Initial topics:
+Current topics:
 
 ```text
 abadar.orders
 abadar.trades
-abadar.balances
-abadar.portfolio
-abadar.market
-abadar.audit
 ```
 
 Potentially later:
 
 ```text
+abadar.balances
+abadar.portfolio
+abadar.market
+abadar.audit
 abadar.dead-letter
 ```
 
@@ -2771,6 +2805,18 @@ docker compose up
 ```
 
 should be enough to launch everything.
+
+Inspect the Version 2 Kafka topics:
+
+```bash
+make kafka-topics
+```
+
+Read the code in a guided order:
+
+```text
+docs/code-reading-guide.md
+```
 
 ---
 

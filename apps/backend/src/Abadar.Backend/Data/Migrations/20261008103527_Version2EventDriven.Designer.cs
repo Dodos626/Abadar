@@ -3,6 +3,7 @@ using System;
 using Abadar.Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Abadar.Backend.Data.Migrations
 {
     [DbContext(typeof(AbadarDbContext))]
-    partial class AbadarDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261008103527_Version2EventDriven")]
+    partial class Version2EventDriven
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
